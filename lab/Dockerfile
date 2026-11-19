@@ -22,7 +22,7 @@ RUN apt-get update \
 RUN set -eu \
     && test -n "${NGINX_TARBALL_SHA256}" \
         || { echo "ERROR: NGINX_TARBALL_SHA256 build arg is required" >&2; exit 1; } \
-    && curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz \
+    && curl -fsSL --connect-timeout 10 --max-time 120 --retry 3 "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz \
     && printf '%s  %s\n' "${NGINX_TARBALL_SHA256}" /tmp/nginx.tar.gz | sha256sum -c - \
     && tar xzf /tmp/nginx.tar.gz -C /tmp \
     && cd "/tmp/nginx-${NGINX_VERSION}" \
