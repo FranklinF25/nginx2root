@@ -102,15 +102,36 @@ frames (`WINDOW_UPDATE`, `RST_STREAM`) never appear in access logs.
 
 ## Open research questions (this repo)
 
-1. Does CVE-2026-123007 stay DoS-only on **musl/Alpine** (no glibc
-   backward-copy memcpy) or is another strategy viable?
-2. glibc < 2.24 (pre backward-copy structure) and other arches (arm64)
+Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
+
+1. **musl/Alpine crash viability** — open; **testing in lab now**
+   (nothing public anywhere: Censys's arm64 matrix used glibc images,
+   Rapid7's profiles pin Debian glibc 2.41 x86-64)
+2. **glibc < 2.24 crash viability** — open; **testing in lab now**
+   (pre backward-copy structure; no public artifact covers it)
 3. Minimum-volume gap between "accounting trigger" (Censys, cheap) and
-   "exploitable memcpy" (Rapid7, 119 GiB)
-4. Verified `http2 off` mitigation harness — **done, shipped in F1**
-   (`poc/diagnose.py` NOT-H2 control + `poc/crash.py`)
+   "exploitable memcpy" (Rapid7, 119 GiB) — partially answered by our
+   flood-budget measurements; the remaining gap is unbuffered-proxy
+   behavior (Censys: inconclusive, < 4 MiB queues)
+4. ~~Verified `http2 off` mitigation harness~~ — **done, shipped in F1**
+   (`poc/diagnose.py` NOT-H2 control + `poc/crash.py`); still the only
+   public `http2 off` verification among the artifacts (neither upstream
+   repo mentions it)
 5. Full public closure of the four UAF paths (only behavior-level
-   reproductions exist)
+   reproductions exist; Censys: 121810 not reproduced, 113425 cmd-exec
+   from retained artifacts only)
+
+### Verified by prior art (inherited — see [prior-art.md](prior-art.md))
+
+- **arm64 accounting tier** — Censys verified the accounting error on
+  arm64 for 1.30.0–1.31.8 (7 releases); crash/RCE on arm64 remains
+  unverified anywhere
+- **AVX-512 RCE constraint** — full RCE requires the calibrated glibc
+  EVEX/YMM memcpy (`avx512f`/`avx512vl`, matched glibc build, x86-64);
+  Rapid7 profile + Censys independent marker-verified reproduction
+- **Release matrix** — accounting error on every release 1.30.0–1.31.8
+  (x86-64, 1/2/4 workers, fresh/40/200-request heaps, main response
+  types); 1.31.9 rejects. A 17-release oracle sweep would be redundant
 
 ### Measured in this lab (F1, 2026-11-19)
 
@@ -121,11 +142,33 @@ frames (`WINDOW_UPDATE`, `RST_STREAM`) never appear in access logs.
   prime `payload_bytes` with ~10 GiB of real downloads (raising the
   allowance to ~80 GiB) before flooding. This reframes the public
   "~119 GiB" figures: bandwidth is necessary but not the whole story.
+  (Credit where due: Rapid7's exploit already defeats the same heuristic
+  by design — its client-sent "flood-budget carrier"; the priming
+  *concept* is prior art. The quantified heuristic, the server-direction
+  priming, and the reframe are ours. Details in
+  [prior-art.md](prior-art.md).)
 - nginx deducts the connection window at frame-build time, and the
   vulnerable capacity check is `send_window + increment > MAX` —
-  staging grants must be state-aware, not hardcoded.
+  staging grants must be state-aware, not hardcoded. (Rapid7 reaches
+  the same requirement via exact-value bookkeeping.)
 - Effective flood rate on primed loopback Docker: ~0.5 GB/s sustained
   (vuln run ≈ 3 min; controls die safely inside the ritual).
+
+## Prior art
+
+Formal comparison of every public artifact against our F1 work, with
+per-artifact original-vs-redundant verdicts and file:line citations:
+[docs/prior-art.md](prior-art.md). The two upstream repos we diffed
+against:
+
+- Rapid7 — `github.com/sfewer-r7/CVE-2026-123007` (full RCE exploit,
+  standalone crash trigger; the flood-budget carrier and the exact 2^64
+  window wrap are theirs)
+- Censys — `github.com/Censys-Research/nginx2root` (compact accounting
+  PoC, release/arm64/worker/heap/response matrices, Rapid7 RCE
+  reproduction; our oracle is a convergent reinvention of theirs)
+
+Wiz's PoC is not public; Xint disclosed but shipped no code.
 
 ## Sources
 
