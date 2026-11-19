@@ -1,8 +1,15 @@
 # Source-built NGINX at a pinned release, for the CVE-2026-123007 lab.
 # Nothing here runs on the host (S4): build and runtime stay in Docker.
-FROM debian:bookworm-slim
+#
+# TOFU pin, computed 2026-11-19 over HTTPS from Docker Hub:
+#   debian:bookworm-slim @ sha256:734a72b3d... (full digest below)
+FROM debian@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 ARG NGINX_VERSION=1.31.8
+# sha256 of https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz —
+# required; the build fails on mismatch (R1-unverified-upstream-artifacts).
+# docker-compose passes one digest per service alongside the version.
+ARG NGINX_TARBALL_SHA256=
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -10,7 +17,13 @@ RUN apt-get update \
         libpcre2-dev zlib1g-dev libssl-dev openssl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz \
+# Download, verify the tarball digest, then build. No unverified bytes
+# from nginx.org ever reach ./configure.
+RUN set -eu \
+    && test -n "${NGINX_TARBALL_SHA256}" \
+        || { echo "ERROR: NGINX_TARBALL_SHA256 build arg is required" >&2; exit 1; } \
+    && curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz \
+    && printf '%s  %s\n' "${NGINX_TARBALL_SHA256}" /tmp/nginx.tar.gz | sha256sum -c - \
     && tar xzf /tmp/nginx.tar.gz -C /tmp \
     && cd "/tmp/nginx-${NGINX_VERSION}" \
     && ./configure \

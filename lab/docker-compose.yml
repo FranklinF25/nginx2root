@@ -1,16 +1,26 @@
 services:
   vuln:
-    # CVE-2026-123007 vulnerable: last mainline release before the fix
+    # CVE-2026-123007 vulnerable: last mainline release before the fix.
+    # Tarball digest pinned by build arg (R1-unverified-upstream-artifacts);
+    # TOFU values computed 2026-11-19 over HTTPS.
     build:
       context: .
       args:
         NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
     image: nginx2root:vuln
     volumes:
       - ./conf/nginx-h2.conf:/etc/nginx/nginx.conf:ro
+    # Loopback-only bindings (R1-lan-reachable): the lab is reachable from
+    # this machine, never from the LAN.
     ports:
-      - "29601:8080"   # cleartext h2c
-      - "29611:443"    # TLS + h2
+      - "127.0.0.1:29601:8080"   # cleartext h2c
+      - "127.0.0.1:29611:443"    # TLS + h2
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
 
   fixed:
     # Patched control: first fixed mainline release
@@ -18,12 +28,18 @@ services:
       context: .
       args:
         NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
     image: nginx2root:fixed
     volumes:
       - ./conf/nginx-h2.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "29602:8080"
-      - "29612:443"
+      - "127.0.0.1:29602:8080"
+      - "127.0.0.1:29612:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
 
   mitigated:
     # Mitigation control: vulnerable build with HTTP/2 off
@@ -31,17 +47,32 @@ services:
       context: .
       args:
         NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
     image: nginx2root:mitigated
     volumes:
       - ./conf/nginx-h2off.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "29603:8080"
-      - "29613:443"
+      - "127.0.0.1:29603:8080"
+      - "127.0.0.1:29613:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
 
   probe:
     # All probes run here (S4: Docker-only) — stdlib Python, no pip deps.
-    image: python:3.12-slim
+    # Image pinned by digest (R3-image-pinning), TOFU 2026-11-19; resolves
+    # to python:3.12-slim.
+    image: python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
     working_dir: /poc
     volumes:
       - ../poc:/poc:ro
     command: sleep infinity
+    depends_on:
+      vuln:
+        condition: service_healthy
+      fixed:
+        condition: service_healthy
+      mitigated:
+        condition: service_healthy

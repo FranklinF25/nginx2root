@@ -5,6 +5,12 @@ probe container (S4: Docker-only). Implements just enough of RFC 7540 to
 drive nginx's connection-level flow-control accounting: SETTINGS,
 WINDOW_UPDATE, PING, RST_STREAM, HEADERS (literal HPACK, no Huffman) and
 GOAWAY parsing.
+
+TLS warning (R1-lab-tls-verification-disabled): the TLS mode disables
+certificate verification deliberately — the lab endpoints serve a
+self-signed certificate and the probe must negotiate h2 via ALPN against
+them. That context is for the lab's own containers only; never reuse it
+against arbitrary remote endpoints.
 """
 
 from __future__ import annotations
@@ -36,6 +42,12 @@ ERR_CANCEL = 0x8
 # nginx: NGX_HTTP_V2_MAX_WINDOW == (1U << 31) - 1
 H2_MAX_WINDOW = (1 << 31) - 1
 H2_DEFAULT_CONN_WINDOW = 65535
+
+# Linux TCP states (net/tcp_states.h), for TCP_INFO-based close detection.
+TCP_STATES = {
+    1: "ESTABLISHED", 4: "FIN_WAIT_1", 5: "FIN_WAIT_2", 6: "TIME_WAIT",
+    7: "CLOSE", 8: "CLOSE_WAIT", 9: "LAST_ACK", 10: "LISTEN", 11: "CLOSING",
+}
 
 
 def build_frame(ftype: int, flags: int, stream_id: int, payload: b"") -> bytes:
@@ -98,6 +110,8 @@ class H2Client:
             # deterministic (the oracle's arithmetic depends on it).
             self.raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
         if tls:
+            # Verify-off is FOR THE LAB'S SELF-SIGNED CERT ONLY (see module
+            # docstring): never point this context at arbitrary endpoints.
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
@@ -107,35 +121,41 @@ class H2Client:
             self.sock = self.raw
         self.buf = b""
         self.frames: list[dict] = []
-        self.eof = False
+        self.eof = False    # clean EOF: recv() returned b"" (peer sent FIN)
+        self.reset = False  # ConnectionResetError: peer sent RST — a
+                            # different event than a clean close; the two
+                            # flags are never collapsed into one
 
     # -- low level ---------------------------------------------------------
 
-    def send(self, data: bytes, dontwait: bool = False) -> int:
-        if dontwait:
-            old = self.sock.gettimeout()
-            self.sock.setblocking(False)
-            try:
-                return self.sock.send(data)
-            except BlockingIOError:
-                return 0
-            finally:
-                self.sock.setblocking(True)
-                self.sock.settimeout(old)
+    def send(self, data: bytes) -> int:
+        """Plain blocking send (the PING-flood clog is gone; R3-timeout-leak)."""
         return self.sock.send(data)
 
     def send_frame(self, ftype: int, flags: int, sid: int, payload: bytes = b"") -> int:
         return self.send(build_frame(ftype, flags, sid, payload))
 
-    def fill(self, timeout: float = 0.2) -> None:
+    def fill(self, timeout: float = 0.2, cap: int | None = None) -> None:
         """Read whatever is available into the buffer (non-destructive parse later).
 
-        Reads until `timeout` of idleness, so a long-enough timeout also works
-        as a drain. Sets self.eof when the peer closes the connection.
+        Reads until `timeout` of idleness or, if `cap` is given, until the
+        buffer holds `cap` bytes — a strictly bounded drain. The oracle needs
+        that bound: surfacing a peer FIN that sits behind the clogged socket
+        requires reading, but draining the vulnerable build's staged queue
+        destroys the double-credit arithmetic.
+
+        Sets self.eof on a clean peer close (recv() == b"") and self.reset on
+        ConnectionResetError; the two stay distinct.
+
+        R3-timeout-leak: the caller's socket timeout is saved and restored —
+        a drain must not change the timeout later sends observe.
         """
+        old = self.sock.gettimeout()
         self.sock.settimeout(timeout)
         try:
             while True:
+                if cap is not None and len(self.buf) >= cap:
+                    break
                 chunk = self.sock.recv(65536)
                 if not chunk:
                     self.eof = True
@@ -144,7 +164,27 @@ class H2Client:
         except (socket.timeout, TimeoutError):
             pass
         except ConnectionResetError:
-            self.eof = True
+            self.reset = True
+        finally:
+            self.sock.settimeout(old)
+
+    def tcp_state(self) -> int:
+        """Current TCP state byte via Linux TCP_INFO (1 == ESTABLISHED).
+
+        Reading TCP state detects a peer FIN WITHOUT consuming any buffered
+        data — a MSG_PEEK cannot see a FIN behind unread bytes, and actually
+        draining would destroy the staged-backlog arithmetic the oracle
+        depends on. Linux-only, like the lab itself.
+        """
+        info = self.sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 128)
+        return info[0]
+
+    def peer_closed(self) -> bool:
+        """True once the peer's FIN/RST has arrived (state != ESTABLISHED)."""
+        return self.tcp_state() != 1
+
+    def peer_state_name(self) -> str:
+        return TCP_STATES.get(self.tcp_state(), f"state-{self.tcp_state()}")
 
     def parse_buffered(self) -> list[dict]:
         out = []
