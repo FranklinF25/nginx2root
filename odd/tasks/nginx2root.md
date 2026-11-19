@@ -126,3 +126,10 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   test-exec hang ~295 s on high-ASLR WSL2 kernel, setarch -R seccomp
   blocked -> plain configure + make-time sanitizer injection. Commit
   `4b2467c`. Next: 121810.
+- **L17** (2026-11-19) — F3 wave 1 closed (worker): CVE-2026-121810 NOT
+  REPRODUCED (~120 attempts, 11 configs, no ASAN/crash/differential —
+  matching public state) but with the first published gate analysis of
+  WHY: ngx_quic_close_stream's gates block the obvious interleaving in
+  1.31.8; real path must be second-order. H1-refiller saturation
+  technique documented. Lab shipped and green (root regression intact).
+  Commit `fcb4aec`. Wave 2 next: 123633 (reuses h2lib) then 113425.
