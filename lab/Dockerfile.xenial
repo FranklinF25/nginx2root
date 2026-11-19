@@ -1,0 +1,62 @@
+# STRETCH (F2, ephemeral): nginx 1.31.x source build on glibc 2.23
+# (ubuntu:16.04) — does the crash survive glibc < 2.24 (pre
+# backward-copy memmove structure)?  Not part of the default lab pair;
+# brought up only via docker-compose.xenial.yml for one-off probes.
+#
+# xenial's apt archives are gone (old-releases.ubuntu.com 404s dists/
+# xenial/, verified 2026-11-19), so this builds FROM buildpack-deps:
+# xenial — a Docker Hub image built FROM ubuntu:16.04 while its archives
+# were live, with build-essential / libssl-dev / zlib1g-dev / openssl /
+# curl already installed.  ldd inside: "Ubuntu GLIBC 2.23-0ubuntu11.3".
+#
+# TOFU pin, computed 2026-11-19 via `docker image inspect` (image pulled
+# over HTTPS from Docker Hub as buildpack-deps:xenial):
+#   buildpack-deps@sha256:8fa9b4c34e51752c088e219b6d6ed1e79ca6b95a144b544ffce9ec95fe0ff44c
+FROM buildpack-deps@sha256:8fa9b4c34e51752c088e219b6d6ed1e79ca6b95a144b544ffce9ec95fe0ff44c
+
+ARG NGINX_VERSION=1.31.8
+ARG NGINX_TARBALL_SHA256=
+
+# Build-deps preinstalled in the base image (no apt: xenial archives are
+# gone).  Deviation from the debian/alpine builds: no PCRE2 exists for
+# xenial anymore, so the rewrite module is compiled out — the lab conf
+# uses no regex, and rewrite is irrelevant to the h2 flow-control crash
+# chain under test.
+RUN set -eu \
+    && test -n "${NGINX_TARBALL_SHA256}" \
+        || { echo "ERROR: NGINX_TARBALL_SHA256 build arg is required" >&2; exit 1; } \
+    && curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz \
+    && printf '%s  %s\n' "${NGINX_TARBALL_SHA256}" /tmp/nginx.tar.gz | sha256sum -c - \
+    && tar xzf /tmp/nginx.tar.gz -C /tmp \
+    && cd "/tmp/nginx-${NGINX_VERSION}" \
+    && ./configure \
+        --prefix=/etc/nginx \
+        --sbin-path=/usr/sbin/nginx \
+        --conf-path=/etc/nginx/nginx.conf \
+        --error-log-path=/dev/stderr \
+        --http-log-path=/dev/stdout \
+        --pid-path=/tmp/nginx.pid \
+        --with-http_ssl_module \
+        --with-http_v2_module \
+        --with-http_stub_status_module \
+        --without-http_rewrite_module \
+    && make -j"$(nproc)" \
+    && make install \
+    && rm -rf /tmp/nginx*
+
+# Self-signed lab certificate for the TLS/h2 listener
+RUN mkdir -p /etc/nginx/certs \
+    && openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -subj "/CN=lab.nginx2root.local" \
+        -keyout /etc/nginx/certs/lab.key \
+        -out /etc/nginx/certs/lab.crt
+
+# 64 MiB of servable body so response DATA can be queued against a
+# zero-sized stream window.
+RUN mkdir -p /var/www \
+    && dd if=/dev/zero of=/var/www/big.bin bs=1M count=64 status=none \
+    && printf 'ok\n' > /var/www/health
+
+STOPSIGNAL SIGQUIT
+EXPOSE 8080 443
+CMD ["nginx", "-g", "daemon off;"]

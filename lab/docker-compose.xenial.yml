@@ -1,0 +1,42 @@
+# STRETCH (F2, ephemeral): glibc 2.23 (ubuntu:16.04) pair.  Used with
+#   docker compose -f docker-compose.yml -f docker-compose.xenial.yml up -d --build --wait
+# for one-off F2 probes; not part of the default lab (old EOL base, not
+# covered by verify.sh).
+services:
+  vuln-xenial:
+    build:
+      context: .
+      dockerfile: Dockerfile.xenial
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+    image: nginx2root:vuln-xenial
+    volumes:
+      - ./conf/nginx-h2-xenial.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29641:8080"
+      - "127.0.0.1:29651:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  fixed-xenial:
+    build:
+      context: .
+      dockerfile: Dockerfile.xenial
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+    image: nginx2root:fixed-xenial
+    volumes:
+      - ./conf/nginx-h2-xenial.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29642:8080"
+      - "127.0.0.1:29652:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3

@@ -9,6 +9,8 @@ lab is reachable from this machine, never from the LAN.
 | `vuln` | nginx **1.31.8** from source (tarball sha256-pinned, base image digest-pinned) | `conf/nginx-h2.conf` | 127.0.0.1:29601 | 127.0.0.1:29611 |
 | `fixed` | nginx **1.31.9** from source (same pinning) | `conf/nginx-h2.conf` | 127.0.0.1:29602 | 127.0.0.1:29612 |
 | `mitigated` | nginx **1.31.8** from source (same pinning) | `conf/nginx-h2off.conf` (`http2 off`) | 127.0.0.1:29603 | 127.0.0.1:29613 |
+| `vuln-musl` | nginx **1.31.8** from source on **Alpine musl** (`lab/Dockerfile.alpine`, same pinning discipline) | `conf/nginx-h2.conf` | 127.0.0.1:29621 | 127.0.0.1:29631 |
+| `fixed-musl` | nginx **1.31.9** from source on **Alpine musl** (same) | `conf/nginx-h2.conf` | 127.0.0.1:29622 | 127.0.0.1:29632 |
 | `probe` | `python:3.12-slim` pinned by digest (stdlib only) | — | — | — |
 
 All pins are TOFU values computed 2026-11-19 over HTTPS (base image
@@ -30,9 +32,10 @@ cd lab && ./verify.sh
 ```
 
 It runs `docker compose up -d --build --wait` (gated on the
-healthchecks), executes the oracle matrix with `--confirm`, asserts the
-three expected verdicts, and greps the nginx logs for worker deaths
-(`signal|exited|segfault`). Exit code 0 / `PASS` means the lab is good.
+healthchecks), executes the oracle matrix with `--confirm` (debian/glibc
+pair plus the musl pair — five expected verdicts), and greps the nginx
+logs for worker deaths (`signal|exited|segfault`). Exit code 0 / `PASS`
+means the lab is good.
 
 `RUN_CRASH=1 ./verify.sh` opts in to the crash matrix afterwards (see
 below); the default run stays fast and never floods.
@@ -90,11 +93,14 @@ mitigated seconds, vuln ~3 min). `--max-frames N` caps the flood for
 bounded smoke runs; `--target` picks single targets. Controls run
 before the vuln attempt so a surprise cannot contaminate them.
 
-`RUN_CRASH=1 ./verify.sh` runs the crash matrix after the oracle
-matrix, asserts the three crash verdicts, requires the vuln
-worker-death line in `vuln` logs, and re-checks that `fixed`/
-`mitigated` stayed worker-death-free (the intentional vuln kill is
-excluded from the generic worker-safety grep in that mode).
+`RUN_CRASH=1 ./verify.sh` runs both crash matrices after the oracle
+matrix (debian pair, then the musl pair), asserts their verdicts
+(fixed/mitigated `SURVIVED`/`NOT-H2`, vuln `WORKER-DIED`; fixed-musl
+`SURVIVED`, vuln-musl `WORKER-DIED`), requires the vuln worker-death
+line in `vuln` logs and the signal-4 line in `vuln-musl` logs, and
+re-checks that `fixed`/`mitigated`/`fixed-musl` stayed worker-death-free
+(the intentional vuln kills are excluded from the generic worker-safety
+grep in that mode).
 
 Manual equivalent — probes always run *inside* the probe container and
 target the in-container service names, never host ports:
@@ -120,6 +126,70 @@ docker compose logs vuln 2>&1 | grep -E 'exited on signal|segfault'
 `diagnose.py` exits 0 only when every target lands in
 `VULNERABLE` / `PATCHED` / `NOT-H2`; `UNCLEAR` and `ERROR` targets exit 1.
 `crash.py` exits 0 only on `SURVIVED` / `NOT-H2` / `WORKER-DIED`.
+
+## musl/Alpine pair (F2)
+
+`vuln-musl` / `fixed-musl` answer F2's libc-differential question: the
+same pinned sources (`1.31.8`/`1.31.9`, identical tarball sha256 args —
+sources are libc-independent) built on `alpine:3.22` (musl) instead of
+`debian:bookworm-slim` (glibc), via `lab/Dockerfile.alpine` (base image
+digest-pinned the same TOFU way; apk deps `build-base pcre2-dev
+openssl-dev zlib-dev openssl curl`; identical configure flags and lab
+goodies — self-signed cert, 64 MiB `big.bin`). The probe waits on this
+pair like on the debian one.
+
+Both probes run against it exactly as against the debian pair — the
+same commands with the `-musl` service names (h2c for the oracle, TLS
+for the crash PoC):
+
+```bash
+# oracle matrix (same staging constants as debian — no musl-specific
+tuning was needed; flow-control accounting is nginx logic):
+docker compose exec probe python /poc/diagnose.py --confirm \
+    vuln-musl:8080 fixed-musl:8080
+
+# crash PoC, controls first:
+docker compose exec probe python /poc/crash.py \
+    --target fixed-musl:443 --target vuln-musl:443
+
+# worker-death evidence (musl note: the observed death signal is 4,
+# SIGILL — not glibc's 11/SIGSEGV):
+docker compose logs vuln-musl 2>&1 | grep -E 'exited on signal'
+```
+
+Expected verdicts: `vuln-musl:8080` -> `VULNERABLE`, `fixed-musl:8080`
+-> `PATCHED` (confirm-able), `fixed-musl:443` -> `SURVIVED` (the patched
+capacity check terminates during the ritual; on a primed connection
+the FIN can surface at the RST drain), `vuln-musl:443` -> `WORKER-DIED`
+with the server-side line `worker process N exited on signal 4 (core
+dumped)` (musl's huge-copy fault presents as SIGILL, deterministically,
+where the glibc pair presents SIGSEGV). `verify.sh` asserts all of
+these: the musl oracle matrix runs in the default (fast) path, the musl
+crash matrix inside `RUN_CRASH=1`.
+
+### Stretch: glibc 2.23 (ubuntu:16.04) — ephemeral
+
+`lab/Dockerfile.xenial` + `lab/docker-compose.xenial.yml` +
+`conf/nginx-h2-xenial.conf` are an ephemeral, not-in-verify.sh stretch
+pair (`vuln-xenial` / `fixed-xenial`, ports 29641-29652): nginx
+1.31.8/1.31.9 on glibc 2.23. Xenial's apt archives are gone
+(old-releases.ubuntu.com 404s `dists/xenial/`), so the build starts
+from `buildpack-deps:xenial` — a Docker Hub image built FROM
+ubuntu:16.04 while its archives were live, with the build deps
+preinstalled (`ldd`: GLIBC 2.23). PCRE2 being unavailable, the rewrite
+module is compiled out (`--without-http_rewrite_module`; the xenial
+conf serves `/health` as a static file instead of `return`). Bring the
+pair up with:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.xenial.yml \
+    up -d --build --wait vuln-xenial fixed-xenial
+```
+
+then probe `vuln-xenial:8080` / `fixed-xenial:8080` (oracle) and
+`fixed-xenial:443` / `vuln-xenial:443` (crash) exactly like the musl
+pair. It is NOT part of `verify.sh` and not required by the default
+lab; keep or drop with the F2 write-up in mind.
 
 ## Oracle verdict semantics
 

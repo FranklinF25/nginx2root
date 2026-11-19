@@ -60,6 +60,50 @@ services:
       timeout: 10s
       retries: 3
 
+  # --- musl/Alpine pair (F2: libc differential) ---------------------------
+  # Same pinned sources on musl; digest-pinned base, same tarball sha256
+  # build args as the debian services (sources are libc-independent).
+
+  vuln-musl:
+    # CVE-2026-123007 vulnerable, musl libc
+    build:
+      context: .
+      dockerfile: Dockerfile.alpine
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+    image: nginx2root:vuln-musl
+    volumes:
+      - ./conf/nginx-h2.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29621:8080"   # cleartext h2c
+      - "127.0.0.1:29631:443"    # TLS + h2
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  fixed-musl:
+    # Patched control, musl libc
+    build:
+      context: .
+      dockerfile: Dockerfile.alpine
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+    image: nginx2root:fixed-musl
+    volumes:
+      - ./conf/nginx-h2.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29622:8080"
+      - "127.0.0.1:29632:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
   probe:
     # All probes run here (S4: Docker-only) — stdlib Python, no pip deps.
     # Image pinned by digest (R3-image-pinning), TOFU 2026-11-19; resolves
@@ -75,4 +119,8 @@ services:
       fixed:
         condition: service_healthy
       mitigated:
+        condition: service_healthy
+      vuln-musl:
+        condition: service_healthy
+      fixed-musl:
         condition: service_healthy
