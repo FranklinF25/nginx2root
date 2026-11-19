@@ -1,0 +1,47 @@
+services:
+  vuln:
+    # CVE-2026-123007 vulnerable: last mainline release before the fix
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+    image: nginx2root:vuln
+    volumes:
+      - ./conf/nginx-h2.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "29601:8080"   # cleartext h2c
+      - "29611:443"    # TLS + h2
+
+  fixed:
+    # Patched control: first fixed mainline release
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+    image: nginx2root:fixed
+    volumes:
+      - ./conf/nginx-h2.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "29602:8080"
+      - "29612:443"
+
+  mitigated:
+    # Mitigation control: vulnerable build with HTTP/2 off
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+    image: nginx2root:mitigated
+    volumes:
+      - ./conf/nginx-h2off.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "29603:8080"
+      - "29613:443"
+
+  probe:
+    # All probes run here (S4: Docker-only) — stdlib Python, no pip deps.
+    image: python:3.12-slim
+    working_dir: /poc
+    volumes:
+      - ../poc:/poc:ro
+    command: sleep infinity
