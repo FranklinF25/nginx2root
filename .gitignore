@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Lab artifacts
+lab/**/objs/
+lab/**/build/
+core
+*.core
+*.dmp
+
+# Local tooling caches
+.atl/
+.DS_Store
