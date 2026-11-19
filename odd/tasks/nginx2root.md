@@ -60,3 +60,10 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
 - **L7** (2026-11-19) — User: "ah por cierto usa docker para no ensuciar mi
   maquina". New constraint S4: Docker-only execution for all lab work.
 - **L6** (2026-11-19) — T2 scaffold commit `837165a` (structure + living finding sheet + LICENSE).
+- **L8** (2026-11-19) — T3 oracle validated by delegated worker: 120
+  streams x 256 KiB staging (kernel backpressure, no PING flood — nginx
+  caps outbound frames at 10000), 4 MiB first-return, RST+drain second
+  return, oversized WU probe. 4/4 stable verdicts, zero worker deaths.
+  Findings: nginx frame cap, 8-byte PING payloads, sendfile-off staging
+  mechanics; lab conf lacks sendfile on (production default) — noted for
+  F2. Commit `29466be`.

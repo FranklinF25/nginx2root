@@ -25,8 +25,9 @@ nothing builds or executes on the host.**
 ## Status
 
 - **F0** — scaffold + living [finding sheet](docs/finding-sheet.md) ✔
-- **F1** — differential lab (1.31.8 vs 1.31.9) + safe detector + crash
-  PoC + `http2 off` mitigation verification for CVE-2026-123007
+- **F1** — safe differential oracle for CVE-2026-123007 ✔ (validated
+  4/4: `vuln` VULNERABLE · `fixed` PATCHED · `mitigated` NOT-H2, zero
+  worker deaths); crash PoC pending
 - **F2** — exploit-constraints audit: Alpine/musl, glibc < 2.24, arm64,
   trigger-vs-exploit traffic gap
 - **F3** — labs + detectors for the other four CVEs
