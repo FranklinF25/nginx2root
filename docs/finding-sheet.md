@@ -107,9 +107,25 @@ frames (`WINDOW_UPDATE`, `RST_STREAM`) never appear in access logs.
 2. glibc < 2.24 (pre backward-copy structure) and other arches (arm64)
 3. Minimum-volume gap between "accounting trigger" (Censys, cheap) and
    "exploitable memcpy" (Rapid7, 119 GiB)
-4. Verified `http2 off` mitigation harness (nobody published one)
+4. Verified `http2 off` mitigation harness — **done, shipped in F1**
+   (`poc/diagnose.py` NOT-H2 control + `poc/crash.py`)
 5. Full public closure of the four UAF paths (only behavior-level
    reproductions exist)
+
+### Measured in this lab (F1, 2026-11-19)
+
+- The window inflation to 2^63 needs ~4.29e9 WINDOW_UPDATE frames
+  (~52 GiB wire) — and nginx 1.31.8's `http2 flood detected`
+  heuristic (`total_bytes/8 > payload_bytes + 1 MiB`) kills a
+  control-frame-only connection within a few hundred MB. Legal defeat:
+  prime `payload_bytes` with ~10 GiB of real downloads (raising the
+  allowance to ~80 GiB) before flooding. This reframes the public
+  "~119 GiB" figures: bandwidth is necessary but not the whole story.
+- nginx deducts the connection window at frame-build time, and the
+  vulnerable capacity check is `send_window + increment > MAX` —
+  staging grants must be state-aware, not hardcoded.
+- Effective flood rate on primed loopback Docker: ~0.5 GB/s sustained
+  (vuln run ≈ 3 min; controls die safely inside the ritual).
 
 ## Sources
 

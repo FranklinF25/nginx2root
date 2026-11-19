@@ -59,22 +59,25 @@ def build_frame(ftype: int, flags: int, stream_id: int, payload: b"") -> bytes:
     )
 
 
-def parse_frame(buf: bytes):
-    """Parse one frame from buf; return (frame_dict, consumed) or (None, 0)."""
+def parse_frame(buf):
+    """Parse one frame from buf (any bytes-like); return (frame_dict,
+    consumed) or (None, 0).  Indexing/int.from_bytes only, so it accepts
+    bytes, bytearray and memoryview slices alike.
+    """
     if len(buf) < 9:
         return None, 0
-    length = struct.unpack(">I", b"\x00" + buf[0:3])[0]
+    length = int.from_bytes(buf[0:3], "big")
     if len(buf) < 9 + length:
         return None, 0
     ftype, flags = buf[3], buf[4]
-    sid = struct.unpack(">I", buf[5:9])[0] & 0x7FFFFFFF
-    payload = buf[9 : 9 + length]
+    sid = int.from_bytes(buf[5:9], "big") & 0x7FFFFFFF
+    payload = bytes(buf[9 : 9 + length])
     f = {"type": ftype, "flags": flags, "sid": sid, "len": length, "payload": payload}
     if ftype == GOAWAY and length >= 8:
-        f["last_sid"] = struct.unpack(">I", payload[0:4])[0] & 0x7FFFFFFF
-        f["error"] = struct.unpack(">I", payload[4:8])[0]
+        f["last_sid"] = int.from_bytes(payload[0:4], "big") & 0x7FFFFFFF
+        f["error"] = int.from_bytes(payload[4:8], "big")
     if ftype == WINDOW_UPDATE and length == 4:
-        f["increment"] = struct.unpack(">I", payload)[0] & 0x7FFFFFFF
+        f["increment"] = int.from_bytes(payload, "big") & 0x7FFFFFFF
     return f, 9 + length
 
 
@@ -119,7 +122,12 @@ class H2Client:
             self.sock = ctx.wrap_socket(self.raw, server_hostname=host)
         else:
             self.sock = self.raw
-        self.buf = b""
+        # bytearray + recv_into: appending to an immutable bytes buffer
+        # reallocates it per chunk (quadratic over hundreds of MiB — the
+        # crash PoC's priming phase reads GiBs through fill()).
+        self.buf = bytearray()
+        self._off = 0                   # parse offset into self.buf
+        self._scratch = bytearray(65536)
         self.frames: list[dict] = []
         self.eof = False    # clean EOF: recv() returned b"" (peer sent FIN)
         self.reset = False  # ConnectionResetError: peer sent RST — a
@@ -154,13 +162,13 @@ class H2Client:
         self.sock.settimeout(timeout)
         try:
             while True:
-                if cap is not None and len(self.buf) >= cap:
+                if cap is not None and len(self.buf) - self._off >= cap:
                     break
-                chunk = self.sock.recv(65536)
-                if not chunk:
+                n = self.sock.recv_into(self._scratch)
+                if n == 0:
                     self.eof = True
                     break
-                self.buf += chunk
+                self.buf += self._scratch[:n]
         except (socket.timeout, TimeoutError):
             pass
         except ConnectionResetError:
@@ -188,12 +196,18 @@ class H2Client:
 
     def parse_buffered(self) -> list[dict]:
         out = []
+        view = memoryview(self.buf)[self._off :]
         while True:
-            f, used = parse_frame(self.buf)
+            f, used = parse_frame(view)
             if f is None:
                 break
-            self.buf = self.buf[used:]
+            self._off += used
+            view = view[used:]
             out.append(f)
+        view.release()  # a live export would block the compaction below
+        if self._off:
+            del self.buf[:self._off]  # one compaction per call: linear time
+            self._off = 0
         self.frames.extend(out)
         return out
 

