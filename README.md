@@ -31,7 +31,7 @@ nothing builds or executes on the host.**
   WORKER-DIED on 1.31.8, SURVIVED on 1.31.9, NOT-H2 when disabled);
   regression harness `lab/verify.sh` (`RUN_CRASH=1` adds the crash
   matrix; loopback-only ports, digest-pinned images, healthcheck-gated)
-- **F2** — exploit-constraints audit (step 0 ✔: [prior-art comparison](docs/prior-art.md) — oracle = convergent reinvention of Censys's compact PoC; flood-heuristic priming concept = Rapid7 prior art; `http2 off` verification + phase-tracked verdicts = ours): Alpine/musl, glibc < 2.24, arm64, trigger-vs-exploit traffic gap
+- **F2** — exploit-constraints audit ✔ (step 0: [prior-art comparison](docs/prior-art.md) — oracle = convergent reinvention of Censys's compact PoC; flood-heuristic priming concept = Rapid7 prior art; `http2 off` verification + phase-tracked verdicts = ours. Empirical: **crash survives musl as SIGILL and glibc 2.23 as SIGSEGV** — DoS holds on every libc, RCE-tier primitive is glibc-only; arm64 accounting inherited from Censys)
 - **F3** — labs + detectors for the other four CVEs
 - **Closure** — PTES report, research writeup, verification matrix
 

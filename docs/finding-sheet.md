@@ -104,11 +104,16 @@ frames (`WINDOW_UPDATE`, `RST_STREAM`) never appear in access logs.
 
 Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
 
-1. **musl/Alpine crash viability** — open; **testing in lab now**
-   (nothing public anywhere: Censys's arm64 matrix used glibc images,
-   Rapid7's profiles pin Debian glibc 2.41 x86-64)
-2. **glibc < 2.24 crash viability** — open; **testing in lab now**
-   (pre backward-copy structure; no public artifact covers it)
+1. **musl/Alpine crash viability** — **ANSWERED (F2, this lab)**: the
+   crash **survives musl** — 3/3 WORKER-DIED runs on alpine:3.22, but as
+   deterministic **signal 4 (SIGILL)**, not glibc's signal 11; the ~2^63
+   OOB copy still faults under musl's forward memcpy. DoS holds on every
+   libc tested; the surgical 160-byte write primitive (RCE tier) is
+   glibc-only. Oracle classifies on musl with the debian staging
+   constants untouched (kernel owns socket buffers, not libc).
+2. **glibc < 2.24 crash viability** — **ANSWERED (F2 stretch, this
+   lab)**: glibc 2.23 (buildpack-deps:xenial) crashes with signal 11 —
+   the kill predates the 2.24 backward-copy memmove rework entirely.
 3. Minimum-volume gap between "accounting trigger" (Censys, cheap) and
    "exploitable memcpy" (Rapid7, 119 GiB) — partially answered by our
    flood-budget measurements; the remaining gap is unbuffered-proxy
@@ -153,6 +158,18 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
   the same requirement via exact-value bookkeeping.)
 - Effective flood rate on primed loopback Docker: ~0.5 GB/s sustained
   (vuln run ≈ 3 min; controls die safely inside the ritual).
+
+### Measured in this lab (F2, 2026-11-19)
+
+- musl (alpine:3.22) and glibc 2.23 (xenial) pairs: oracle verdicts and
+  staging envelopes match the debian pair (patched flush 0.77–0.87 MiB,
+  vulnerable bounded-drain ~1.5 MiB — libc-independent, kernel-owned).
+- Flood under musl: 52.21 Mfr/s / 679 MB/s effective (glibc: ~709 MB/s);
+  priming identical (10 GiB / 160 streams / ~33 s); vuln-musl kill wall
+  ~1m51s. Fault signature: **SIGILL on musl, SIGSEGV on every glibc
+  (2.23 → bookworm)** — first public libc-matrix for this bug.
+- Caveat: the musl SIGILL root cause (which instruction faults) is not
+  dissected — cores do not persist in the lab containers.
 
 ## Prior art
 

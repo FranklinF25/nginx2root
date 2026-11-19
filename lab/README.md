@@ -222,3 +222,10 @@ crashing either side:
 
 `mitigated` must refuse h2c/h2 negotiation entirely (ALPN/h2c
 prior-knowledge handshake failure) — the verified-mitigation control.
+
+## Known hazard: verify.sh ordering
+
+A default `./verify.sh` run started within 5 minutes of a `RUN_CRASH=1`
+run fails its worker-safety grep: the intentional vuln kill lines are
+still inside the `--since 5m` window. Wait ~5 minutes between modes (a
+marker-file fix is possible if this annoys you).

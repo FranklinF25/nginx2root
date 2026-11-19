@@ -101,3 +101,19 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   reliability was covered empirically (verify.sh 3/3 + crash matrix).
   `gentle-ai review mode disable --scope clone` applied; re-enable is a
   user decision when reviewer capacity recovers.
+- **L14** (2026-11-19) — F2 step 0 (worker A): docs/prior-art.md with
+  path:line verdicts. Corrections: flood-heuristic priming = prior art
+  BY CONCEPT (Rapid7 primes the payload budget with max-size HEAD
+  requests before the WU replay, bootstrap.py:447-471); ours = opposite
+  direction (downloads) + quantified formula; dual-direction allowance
+  growth = joint undocumented. Oracle = convergent reinvention of the
+  Censys compact PoC. arm64/AVX-512/release matrix inherited. Commit
+  `077100a`.
+- **L15** (2026-11-19) — F2 empirical (worker B): musl/Alpine pair +
+  glibc 2.23 stretch. ANSWERS: oracle classifies on musl with debian
+  constants intact; crash SURVIVES musl (3/3 WORKER-DIED, signal 4
+  SIGILL vs glibc signal 11 — DoS holds on every libc, surgical write
+  primitive glibc-only); glibc 2.23 crashes (signal 11 — kill predates
+  the 2.24 memmove rework). verify.sh default 5/5 PASS ~25 s,
+  RUN_CRASH=1 full PASS 5m37s. Finding sheet + README integrated.
+  Commits `5b07f8a` + this one. F2 CLOSED.
