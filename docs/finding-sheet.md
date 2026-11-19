@@ -122,9 +122,14 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
    (`poc/diagnose.py` NOT-H2 control + `poc/crash.py`); still the only
    public `http2 off` verification among the artifacts (neither upstream
    repo mentions it)
-5. Full public closure of the four UAF paths (only behavior-level
-   reproductions exist; Censys: 121810 not reproduced, 113425 cmd-exec
-   from retained artifacts only)
+5. Full public closure of the four UAF paths — **123634 ANSWERED (F3,
+   this lab)**: stock 1.31.8 worker SIGSEGV, reproducible (DNS-failure
+   holds 50–300 ms; race win rate 20–40%/attempt), ALERT "could not
+   cancel ... resolving" as the path marker, verbatim ASAN report at
+   ngx_resolver.c:2142; fixed 1.31.9 survives every cell — first public
+   stock-build crash for this CVE (Censys had ASAN + custom-debug only).
+   Still open: 121810 (nobody), 123633 (Censys stock crash; ours pending),
+   113425 (Censys cmd-exec from retained artifacts; ours pending)
 
 ### Verified by prior art (inherited — see [prior-art.md](prior-art.md))
 

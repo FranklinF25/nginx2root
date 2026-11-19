@@ -1,0 +1,126 @@
+name: nginx2root-123634
+
+services:
+  # CVE-2026-123634 lab: nginx DNS-resolver use-after-free (waiting-list
+  # walk vs. mirror-subrequest teardown). Four nginx variants (vuln/fixed
+  # x stock/ASAN), one controllable DNS responder, one stdlib probe.
+  # Host ports 29640 + 29644-29646, loopback-only (the lab's assigned
+  # range is 29640-29649; 29641/29642 are deliberately left free for the
+  # root lab's ephemeral xenial overlay so the two can never collide).
+
+  vuln:
+    # CVE-2026-123634 vulnerable: last mainline release before the fix.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+        ASAN: "0"
+    image: nginx2root-123634:vuln
+    volumes:
+      - ./conf/nginx-resolver.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29640:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  fixed:
+    # Patched control: first fixed mainline release.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+        ASAN: "0"
+    image: nginx2root-123634:fixed
+    volumes:
+      - ./conf/nginx-resolver.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29644:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  vuln-asan:
+    # Same vulnerable source, ASAN-instrumented: the evidence floor —
+    # the verbatim heap-use-after-free report even where stock survives.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+        ASAN: "1"
+    image: nginx2root-123634:vuln-asan
+    environment:
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+    volumes:
+      - ./conf/nginx-resolver.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29645:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  fixed-asan:
+    # ASAN-instrumented fixed control: the identical trigger must produce
+    # NO report here — the ASAN differential.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+        ASAN: "1"
+    image: nginx2root-123634:fixed-asan
+    environment:
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+    volumes:
+      - ./conf/nginx-resolver.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:29646:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  dns:
+    # Controllable authoritative responder; behavior encoded in the query
+    # name (<mode>-<delay_ms>-<seq>.u123634.test) — see dns/dnsd.py.
+    # No published port: internal compose network only.
+    image: python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    volumes:
+      - ./dns:/dns:ro
+    command: python /dns/dnsd.py
+    healthcheck:
+      # A query for "connect" (unknown mode) must get the REFUSED reply.
+      test: ["CMD-SHELL", "python -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2); s.sendto(bytes.fromhex(\"ab0d0100000100000000000007636f6e6e6563740000010001\"), (\"127.0.0.1\", 53)); assert s.recvfrom(512) [0] [3] & 5'"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  probe:
+    # All triggers run here (S4: Docker-only) — stdlib Python, no pip deps.
+    # Image digest-pinned (TOFU 2026-11-19, same as the root lab's probe).
+    image: python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    working_dir: /poc
+    volumes:
+      - ../../poc:/poc:ro
+    command: sleep infinity
+    depends_on:
+      vuln:
+        condition: service_healthy
+      fixed:
+        condition: service_healthy
+      vuln-asan:
+        condition: service_healthy
+      fixed-asan:
+        condition: service_healthy
+      dns:
+        condition: service_healthy
