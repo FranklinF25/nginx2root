@@ -117,3 +117,12 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   the 2.24 memmove rework). verify.sh default 5/5 PASS ~25 s,
   RUN_CRASH=1 full PASS 5m37s. Finding sheet + README integrated.
   Commits `5b07f8a` + this one. F2 CLOSED.
+- **L16** (2026-11-19) — F3 first result (worker, attempt 3 after two
+  stalls root-caused and fixed): CVE-2026-123634 STOCK CRASH on 1.31.8 —
+  first public beyond Censys's ASAN/custom-debug. Race: DNS-failure holds
+  50-300 ms; ALERT "could not cancel" -> signal 11; win rate 20-40%.
+  ASAN report ngx_resolver.c:2142 verbatim; fixed survives all. Stalls:
+  (1) unbounded curl (patched in both Dockerfiles), (2) ASAN configure
+  test-exec hang ~295 s on high-ASLR WSL2 kernel, setarch -R seccomp
+  blocked -> plain configure + make-time sanitizer injection. Commit
+  `4b2467c`. Next: 121810.
