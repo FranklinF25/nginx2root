@@ -89,3 +89,15 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   frame-build time (grants must be state-aware); (4) patched-build FIN
   surfaces one drain later on primed connections. ~52 GiB wire, ~3 min
   per vuln run at ~0.5 GB/s primed. Commit `fb4d4ab`.
+- **L13** (2026-11-19) — Delivery of the fix + crash units was blocked by
+  reviewer infrastructure: the review-reliability lens (glm-5.3) exceeded
+  the relay bound three times and ECONNRESET once across two scopes
+  (104KB full range, 58KB wave-1 split), while review-risk captured
+  successfully every time (510-715s). Provider declared the slot
+  unachievable; two lineages parked with risk captured
+  (review-abaeca8739f5d32a, review-812250475160c8fe), no closure.
+  User decision (ask_user_choice): disable RDD clone-local and deliver
+  under ordinary policy — risk lens had approved both waves and
+  reliability was covered empirically (verify.sh 3/3 + crash matrix).
+  `gentle-ai review mode disable --scope clone` applied; re-enable is a
+  user decision when reviewer capacity recovers.
