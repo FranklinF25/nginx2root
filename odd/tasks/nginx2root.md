@@ -50,3 +50,4 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
 - **L5** (2026-11-19) — User: "espera antes crea el repo publico con gh con
   el mismo nombre que este directorio sin readme ni descripcion". Repo
   created empty, then scaffold proceeds.
+- **L6** (2026-11-19) — T2 scaffold commit `837165a` (structure + living finding sheet + LICENSE).
