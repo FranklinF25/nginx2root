@@ -67,3 +67,14 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   Findings: nginx frame cap, 8-byte PING payloads, sendfile-off staging
   mechanics; lab conf lacks sendfile on (production default) — noted for
   F2. Commit `29466be`.
+- **L9** (2026-11-19) — Native review on 2348fe2..8cf9c5c approved
+  (lineage review-f04a6e0d43ce4206, lenses risk+reliability, zero
+  corrections). 10 advisory findings recorded as task #7; range pushed.
+- **L10** (2026-11-19) — User approved continuing with #7 and the crash
+  PoC ("si dale segui con la #7 y el crash PoC").
+- **L11** (2026-11-19) — #7 closed by delegated worker: all 10 findings
+  fixed, regression 3/3 PASS, worker safety clean. Deviation accepted:
+  FIRST_RETURN kept at 4 MiB — the bounded first-return drain consumes
+  up to 1.5 MiB on the vuln path, so 2 MiB would zero the margin
+  (empirically reproduced). TOFU pinning values dated 2026-11-19.
+  Commit `4a739b4`.
