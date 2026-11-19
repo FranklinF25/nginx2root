@@ -128,8 +128,17 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
    cancel ... resolving" as the path marker, verbatim ASAN report at
    ngx_resolver.c:2142; fixed 1.31.9 survives every cell — first public
    stock-build crash for this CVE (Censys had ASAN + custom-debug only).
-   Still open: 121810 (nobody), 123633 (Censys stock crash; ours pending),
-   113425 (Censys cmd-exec from retained artifacts; ours pending)
+   **121810: NOT REPRODUCED (F3, this lab, honest negative)** — ~120
+   attempts x 11 configurations (worker_connections 32–128, idle/fin/abort
+   streams, h1 refiller saturation pinning free_connection_n at
+   connection_n/16): no ASAN report, no stock crash, no differential;
+   drains fire (precondition present) but victims were ~100% h1
+   keepalives. Source-verified gate analysis: a drain-closed same-parent
+   idle stream cannot synchronously pass ngx_quic_close_stream's two
+   gates in 1.31.8 — the real interleaving must be second-order (next
+   angles: instrumented-debug builds, uni-stream/two-parent pressure).
+   Still open: 123633 (Censys stock crash; ours pending), 113425 (Censys
+   cmd-exec from retained artifacts; ours pending)
 
 ### Verified by prior art (inherited — see [prior-art.md](prior-art.md))
 

@@ -1,0 +1,140 @@
+name: nginx2root-121810
+
+services:
+  # CVE-2026-121810 lab: HTTP/3/QUIC connection-draining use-after-free.
+  # Four nginx variants (vuln/fixed x stock/ASAN), one tiny upstream, one
+  # aioquic probe. Host ports 29650-29655, loopback-only (the lab's
+  # assigned range is 29650-29659). The probe always talks to in-network
+  # service names; host ports exist only for host-side debugging.
+  #
+  # worker_connections comes from the WC env (default 32) so the
+  # iteration matrix (32/48/64) needs no rebuild: WC=48 docker compose up.
+
+  vuln:
+    # CVE-2026-121810 vulnerable: last mainline release before the fix.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+        ASAN: "0"
+    image: nginx2root-121810:vuln
+    environment:
+      WC: "${WC:-32}"
+    volumes:
+      - ./conf/nginx-h3.conf:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29650:443/udp"
+      - "127.0.0.1:29651:443/tcp"
+      - "127.0.0.1:29652:8080/tcp"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  fixed:
+    # Patched control: first fixed mainline release. The 1.31.9 fix moves
+    # the stream rbtree insert BEFORE the connection-slot allocation, so
+    # ngx_quic_can_shutdown() can always see the being-created stream and
+    # the drain can never re-mark the parent reusable mid-create.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+        ASAN: "0"
+    image: nginx2root-121810:fixed
+    environment:
+      WC: "${WC:-32}"
+    volumes:
+      - ./conf/nginx-h3.conf:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29653:443/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  vuln-asan:
+    # Same vulnerable source, ASAN-instrumented: the evidence floor —
+    # a verbatim heap-use-after-free report even where stock survives.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+        ASAN: "1"
+    image: nginx2root-121810:vuln-asan
+    environment:
+      WC: "${WC:-32}"
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+    volumes:
+      - ./conf/nginx-h3.conf:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29654:443/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  fixed-asan:
+    # ASAN-instrumented fixed control: the identical trigger must produce
+    # NO report here — the ASAN differential.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+        ASAN: "1"
+    image: nginx2root-121810:fixed-asan
+    environment:
+      WC: "${WC:-32}"
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+    volumes:
+      - ./conf/nginx-h3.conf:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29655:443/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  upstream:
+    # Tiny upstream: /ok reachable, /slow?ms=N holds, /health. No
+    # published port: internal compose network only. The refused variant
+    # needs no service at all (nginx proxies to its own 127.0.0.1:9).
+    image: python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    volumes:
+      - ./upstream:/upstream:ro
+    command: python /upstream/serve.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+
+  probe:
+    # All triggers run here (S4: Docker-only): pinned python base +
+    # version-pinned aioquic (see probe/Dockerfile).
+    build:
+      context: ./probe
+    image: nginx2root-121810:probe
+    working_dir: /poc
+    volumes:
+      - ../../poc:/poc:ro
+    command: sleep infinity
+    depends_on:
+      vuln:
+        condition: service_healthy
+      fixed:
+        condition: service_healthy
+      vuln-asan:
+        condition: service_healthy
+      fixed-asan:
+        condition: service_healthy
+      upstream:
+        condition: service_healthy
