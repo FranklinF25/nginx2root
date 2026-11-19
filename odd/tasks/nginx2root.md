@@ -78,3 +78,14 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   up to 1.5 MiB on the vuln path, so 2 MiB would zero the margin
   (empirically reproduced). TOFU pinning values dated 2026-11-19.
   Commit `4a739b4`.
+- **L12** (2026-11-19) — T3 crash PoC closed by delegated worker:
+  WORKER-DIED (signal 11, core dumped, PID transitions) on vuln:443,
+  SURVIVED on fixed:443, NOT-H2 on mitigated:443; oracle regression
+  3/3 PASS; RUN_CRASH=1 verify.sh PASS. Original mechanism findings:
+  (1) the flood's real enemy is the 'http2 flood detected' heuristic
+  (total/8 > payload + 1 MiB), not timeouts — defeated legally with
+  ~10 GiB payload priming; (2) lingering close creates a 30s illusion
+  of rate-related deaths; (3) nginx deducts the connection window at
+  frame-build time (grants must be state-aware); (4) patched-build FIN
+  surfaces one drain later on primed connections. ~52 GiB wire, ~3 min
+  per vuln run at ~0.5 GB/s primed. Commit `fb4d4ab`.

@@ -25,10 +25,12 @@ nothing builds or executes on the host.**
 ## Status
 
 - **F0** — scaffold + living [finding sheet](docs/finding-sheet.md) ✔
-- **F1** — safe differential oracle for CVE-2026-123007 ✔ (validated
-  4/4: `vuln` VULNERABLE · `fixed` PATCHED · `mitigated` NOT-H2, zero
-  worker deaths; regression harness `lab/verify.sh` — loopback-only
-  ports, digest-pinned images, healthcheck-gated); crash PoC pending
+- **F1** — CVE-2026-123007 ✔: differential lab (1.31.8 vs 1.31.9 vs
+  `http2 off`), safe oracle (`poc/diagnose.py`, 3/3 verdicts), and the
+  deterministic worker-death crash PoC over TLS (`poc/crash.py`:
+  WORKER-DIED on 1.31.8, SURVIVED on 1.31.9, NOT-H2 when disabled);
+  regression harness `lab/verify.sh` (`RUN_CRASH=1` adds the crash
+  matrix; loopback-only ports, digest-pinned images, healthcheck-gated)
 - **F2** — exploit-constraints audit: Alpine/musl, glibc < 2.24, arm64,
   trigger-vs-exploit traffic gap
 - **F3** — labs + detectors for the other four CVEs
