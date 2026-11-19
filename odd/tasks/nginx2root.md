@@ -19,6 +19,10 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   directorio sin readme ni descripcion": public GitHub repo
   `FranklinF25/nginx2root`, no README, no description, created before the
   scaffold.
+- **S4** — "ah por cierto usa docker para no ensuciar mi maquina": every
+  lab, PoC and exploit runs inside Docker containers (like the companion
+  repos); no nginx build, dependency install or exploit traffic touches
+  the host.
 
 ## Tasks
 
@@ -50,4 +54,9 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
 - **L5** (2026-11-19) — User: "espera antes crea el repo publico con gh con
   el mismo nombre que este directorio sin readme ni descripcion". Repo
   created empty, then scaffold proceeds.
+- **L6** (2026-11-19) — T2 scaffold commit `66c30e9` (structure + living
+  finding sheet + LICENSE); history rebased onto empty root `f7aab07` so
+  the whole slice is assessable as a committed range.
+- **L7** (2026-11-19) — User: "ah por cierto usa docker para no ensuciar mi
+  maquina". New constraint S4: Docker-only execution for all lab work.
 - **L6** (2026-11-19) — T2 scaffold commit `837165a` (structure + living finding sheet + LICENSE).

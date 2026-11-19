@@ -19,7 +19,8 @@ Fixed in NGINX Open Source **1.30.7** (stable) / **1.31.9** (mainline).
 **Scope** (decided 2026-11-19): family-wide, NGINX-only — differential
 labs and safe detectors for the five paths, an exploit-constraints audit
 (musl/glibc/architectures), and the full docs trio. The kernel SCTP bug
-is documented but not researched here.
+is documented but not researched here. **All lab work runs inside Docker;
+nothing builds or executes on the host.**
 
 ## Status
 
