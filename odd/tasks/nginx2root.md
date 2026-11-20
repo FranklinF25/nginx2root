@@ -38,7 +38,7 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
 | T4 F2: exploit-constraints audit — Alpine/musl, glibc < 2.24, arm64, trigger-vs-exploit traffic gap | S2 | inline | — |
 | T5 F3: labs + detectors for CVE-2026-123633, -121810, -123634 (113425 dropped, L20) | S2 | worker | fcb4aec, 4b2467c, 7034029 |
 | T6 Closure: PTES report + research writeup + README verification matrix + cross-links (42533/42945, profile) | S2 | worker | — |
-| T7 Landscape refresh: finding sheet + prior-art + README to the 2026-11-20 public state (Cloudflare ASAN 4/5 repro incl. 113425, USN-9182-1, CISA 2026-136, Rapid7 PoC, fake exploits, 125283 note) | S2 | worker | — |
+| T7 Landscape refresh: finding sheet + prior-art + README to the 2026-11-20 public state (Cloudflare ASAN 4/5 repro incl. 113425, USN-9182-1, CISA 2026-136, Rapid7 PoC, fake exploits, 125283 note) | S2 | worker | f7289ea |
 
 ## Log
 
@@ -170,3 +170,16 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   123634 "first public stock crash" claim stays technically distinct
   (Cloudflare used ASAN builds) but the novelty window is closed;
   prior-art must record both honestly. Remaining: T7, then T6.
+- **L21** (2026-11-20) — T7 delivered by background worker (mwoy1n3x):
+  docs trio refreshed to the 2026-11-20 landscape — Cloudflare deep dive
+  integrated (ASAN 4/5 repro incl. 113425 full mail mechanism, 123634
+  walk-list mechanism, first-affected 0.6.18/0.5.33 corrections,
+  mitigation matrix, KEV/ITW status, Rapid7 fresh-container caveat,
+  fake-exploits warning), CISA 2026-136, 125283 disambiguation, and
+  per-CVE honest overlap verdicts in prior-art. Parent spot-check:
+  diff stat 225+/22- across exactly the three allowed files. Evidence-
+  driven deviation ACCEPTED: live USN-9182-1 (fetched, HTTP 200) fixes
+  ONLY the co-shipped non-family CVEs (125283, 123640, 118899) — no
+  family fix in Ubuntu packages as of 2026-11-20; recorded accurately
+  instead of the tasked "distro fixes shipped" framing. CISA cited by
+  ID+date only (URL not yet added). Commit `f7289ea`. Next: T6.
