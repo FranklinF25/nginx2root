@@ -133,3 +133,9 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   1.31.8; real path must be second-order. H1-refiller saturation
   technique documented. Lab shipped and green (root regression intact).
   Commit `fcb4aec`. Wave 2 next: 123633 (reuses h2lib) then 113425.
+- **L18** (2026-11-19) — F3 wave 2 first result (worker, survived 118
+  turns + a rate-limit death of its predecessor): CVE-2026-123633
+  PARTIAL — differential oracle 3/3 four builds + verbatim kill chain,
+  no terminal UAF (below Censys crash parity, above on mechanism: 3
+  source-verified corrections incl. SETTINGS-frame mark shape and
+  head-insert/oldest-drain queue law). Commit `7034029`. Remaining: 113425.
