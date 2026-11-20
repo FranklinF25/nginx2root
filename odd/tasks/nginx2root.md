@@ -15,6 +15,10 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   safe detectors for the five CVEs, exploit-constraints audit
   (musl/glibc/arch), full docs trio (finding sheet + PTES report +
   research writeup) with verification matrix. SCTP kernel bug: out of scope.
+  Scope amendment (2026-11-20, L20): the CVE-2026-113425 local lab is
+  DROPPED — Cloudflare's 2026-11-20 deep dive already published an
+  independent ASAN repro plus the full mail-proxy mechanism; 113425 is
+  presented from public prior art in the closure docs.
 - **S3** — "crea el repo publico con gh con el mismo nombre que este
   directorio sin readme ni descripcion": public GitHub repo
   `FranklinF25/nginx2root`, no README, no description, created before the
@@ -32,8 +36,9 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
 | T2 Scaffold + living finding sheet (F0) | S1, S2 | inline | recorded below |
 | T3 F1: differential lab 1.31.8 vs 1.31.9 + safe detector + crash PoC + `http2 off` mitigation verification for CVE-2026-123007 | S2 | inline | — |
 | T4 F2: exploit-constraints audit — Alpine/musl, glibc < 2.24, arm64, trigger-vs-exploit traffic gap | S2 | inline | — |
-| T5 F3: labs + detectors for CVE-2026-123633, -121810, -123634, -113425 | S2 | inline | — |
-| T6 Closure: PTES report + research writeup + README verification matrix + cross-links (42533/42945, profile) | S2 | inline | — |
+| T5 F3: labs + detectors for CVE-2026-123633, -121810, -123634 (113425 dropped, L20) | S2 | worker | fcb4aec, 4b2467c, 7034029 |
+| T6 Closure: PTES report + research writeup + README verification matrix + cross-links (42533/42945, profile) | S2 | worker | — |
+| T7 Landscape refresh: finding sheet + prior-art + README to the 2026-11-20 public state (Cloudflare ASAN 4/5 repro incl. 113425, USN-9182-1, CISA 2026-136, Rapid7 PoC, fake exploits, 125283 note) | S2 | worker | — |
 
 ## Log
 
@@ -146,3 +151,22 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   + writeup + verification matrix + cross-links). All delivered work is
   pushed through 43a64ae. Resume: read this doc to ## Log, check
   lab/113425 state first.
+- **L20** (2026-11-20) — User decision (ask_user_choice) after the 24 h
+  landscape re-check: **"Cerrar sin 113425"** — drop the CVE-2026-113425
+  lab and pivot straight to closure. Trigger: Cloudflare blog
+  (2026-11-20, blog.cloudflare.com/nginx2root) built 1.31.8 (140aa94) vs
+  1.31.9 with ASAN and published independent repro of 4/5 — 123007,
+  123633, 123634 and 113425 each fault on 1.31.8 and run clean on 1.31.9;
+  121810 NOT reproduced (external validation of our honest negative +
+  gate analysis) — including the full 113425 mechanism (queued reply +
+  `ngx_mail_send()` + client reset during `auth_http`; two conditions:
+  write event already registered + same event-loop pass). Also new:
+  Ubuntu USN-9182-1 (distro fixes all LTS), CISA advisory 2026-136 (no
+  KEV, no ITW as of 2026-11-19), Rapid7 PoC public (fresh-local-container
+  demo only), fake exploits circulating on GitHub; CVE-2026-125283
+  (try_files/alias, other finders) shipped in the same 1.31.9 — not
+  family, note only. The cancelled worker's 113425 scaffold is already
+  absent (clean tree at c994e69) — nothing to review or delete. Our
+  123634 "first public stock crash" claim stays technically distinct
+  (Cloudflare used ASAN builds) but the novelty window is closed;
+  prior-art must record both honestly. Remaining: T7, then T6.
