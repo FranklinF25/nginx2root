@@ -15,13 +15,36 @@
 |---|---|---|---|---|
 | CVE-2026-123007 | H2 flow-control window credit returned twice (`WINDOW_UPDATE` + canceled-stream cleanup) → window > 2³¹−1 → unsigned underflow → signed/unsigned confusion → ~2⁶⁴ memcpy length (OOB write + address disclosure) | HTTP/2 enabled | 1.9.5 (2015-09-22) | Yes |
 | CVE-2026-123633 | Active h2 connection left in the reusable queue (incomplete-frame flag checked after enqueue); drain during upstream connect frees the live request | HTTP/2 + `proxy_pass` upstream | 1.19.7 | Yes |
-| CVE-2026-123634 | Resolver waiting-list loop holds `next` while a handler frees the sibling context (main request + `mirror` subrequest on the same DNS node) | `resolver` + variable `proxy_pass` + `mirror` (SSI may reach) | 1.13.4 | No |
+| CVE-2026-123634 | Resolver waiting-list loop holds `next` while a handler frees the sibling context (main request + `mirror` subrequest on the same DNS node) | `resolver` + variable `proxy_pass` + `mirror` (SSI may reach) | 0.6.18 (Cloudflare, 2026-11-20) | No |
 | CVE-2026-121810 | Parent QUIC connection re-queued during stream creation (rbtree insert after slot alloc); drain frees the in-flight request | HTTP/3 + `proxy_pass` upstream | 1.25.0 | No |
-| CVE-2026-113425 | Client session freed during `auth_http` lookup (write-handler error path); auth connection later uses stale `data` pointer | `mail` block: `proxy on` + `auth_http` | 0.5.15 | No |
+| CVE-2026-113425 | Client session freed during `auth_http` lookup (write-handler error path); auth connection later uses stale `data` pointer — full public mechanism below | `mail` block: `proxy on` + `auth_http` | 0.5.33 (Cloudflare, 2026-11-20) | No |
 
 All five are independent attack paths; no chaining needed. Exploitation
 runs with **worker** privileges. ASLR/PIE are **not** mitigations: the
 bugs themselves provide address disclosure (Xint/Wiz/Rapid7 demonstrated).
+
+First-affected corrections (Cloudflare, 2026-11-20,
+<https://blog.cloudflare.com/nginx2root/>): 123634 dates back to **0.6.18**
+and 113425 to **0.5.33**, correcting the advisory-era figures this sheet
+previously carried (1.13.4 / 0.5.15).
+
+### CVE-2026-113425 — presented from public prior art (lab dropped, L20)
+
+The local 113425 lab was dropped on 2026-11-20 (L20): Cloudflare's deep
+dive (2026-11-20, <https://blog.cloudflare.com/nginx2root/>) published
+an independent ASAN repro (faults on 1.31.8, runs clean on 1.31.9) plus
+the full mechanism, on top of Xint's disclosure and F5 K000163931 —
+nothing left for a scoped local lab to add. Full mechanism (Cloudflare):
+two connections share one mail session; during `auth_http` the reply the
+protocol handler prepared stays queued and the client write handler
+remains `ngx_mail_send()`. If that handler runs and the write fails
+because the client reset the connection, the client connection closes
+and destroys the session while the auth connection still points at it.
+Two conditions: the client write event must already be registered (e.g.
+the client stopped reading), and the login command + reset must be
+handled in the same event-loop pass. **Valid credentials are NOT
+needed.** Fix: discard the queued reply when the auth request begins,
+plus three further commits blocking client writes during auth phases.
 
 ## Fixed-version matrix
 
@@ -37,16 +60,36 @@ bugs themselves provide address disclosure (Xint/Wiz/Rapid7 demonstrated).
 | BIG-IP / BIG-IQ / F5OS | not vulnerable |
 | community ingress-nginx | archived 2026-03, no further fixes |
 
-1.31.9/1.30.7 also fix CVE-2026-125283 (`try_files`+`alias` overflow),
+1.31.9/1.30.7 also fix CVE-2026-125283 (`try_files`+`alias` buffer
+overflow, found by Marc Luchian and Liviu-Alexandru Bud — finder
+attribution confirmed by USN-9182-1; different finders, **not** part of
+the NGINX2Root family — it merely shipped in the same releases),
 CVE-2026-118899 (TLS 1.3 body read infinite loop), CVE-2026-120993 (PROXY
 protocol v2 NULL deref). Vendor workarounds exist only for 123634 (avoid
 variable proxy targets + SSI/mirror) and 113425 (trusted-network
-listeners); `http2 off` is a CIRCL/Xint mitigation, not an F5 one.
+listeners); `http2 off` is a CIRCL/Xint mitigation, not
+an F5 one — and now also Cloudflare's (matrix below).
 
-## Distribution status (checked 2026-11-19)
+Mitigation matrix (Cloudflare, 2026-11-20,
+<https://blog.cloudflare.com/nginx2root/>):
 
-- Ubuntu 16.04–26.04: vulnerable, **no fixed package yet**; ≤ 20.04
-  unpatchable via nginx.org (newest build 1.27.5 — vulnerable)
+| CVE | Mitigation |
+|---|---|
+| 123007 + 123633 | `http2 off` |
+| 121810 | remove QUIC listeners + `http3 off` |
+| 123634 | fixed upstream groups (`mirror_request_body on` is NOT sufficient — SSI reaches the same path) |
+| 113425 | bind `mail` listeners to trusted networks only |
+| all five | **restart required** — reload leaves old workers with old sessions |
+
+## Distribution status (Ubuntu re-checked 2026-11-20; rest 2026-11-19)
+
+- Ubuntu 26.10 + 26.04–14.04 LTS: USN-9182-1 (2026-11-20,
+  https://ubuntu.com/security/notices/USN-9182-1) ships distro fixes for
+  the **co-shipped non-family** nginx CVEs only (125283, 123640, 118899) —
+  none of the five NGINX2Root CVEs is listed in the notice; family status
+  in Ubuntu packages is unchanged (vulnerable, no family-specific fixed
+  package observed as of 2026-11-20). ≤ 20.04 remains unpatchable via
+  nginx.org (newest build 1.27.5 — vulnerable)
 - Debian bookworm/trixie/forky/sid: vulnerable, no fixed package yet
 - Laravel Forge: auto-updates do **not** patch nginx; ondrej/nginx PPA
   removed from Launchpad — manual switch to nginx.org repo required
@@ -81,21 +124,34 @@ programs (`auditd`: `auditctl -a always,exit -F arch=b64 -S execve,execveat
 abnormal worker exits/core dumps (`error.log`, `coredumpctl`). H2 control
 frames (`WINDOW_UPDATE`, `RST_STREAM`) never appear in access logs.
 
-## Threat landscape (checked 2026-11-19)
+## Threat landscape (checked 2026-11-20)
 
-- **In the wild**: no public evidence of exploitation yet; not in CISA KEV
+- **In the wild**: no public evidence of exploitation yet; none of the
+  five in CISA KEV (Cloudflare status, 2026-11-19). CISA advisory
+  **2026-136** (2026-11-19): no exploitation in the wild as of
+  2026-11-18/19.
 - **Public PoCs**:
   - Rapid7 `sfewer-r7/CVE-2026-123007` — full RCE vs 1.31.8; constraints
     of *this implementation*: ~119 GiB of H2 traffic, ≥300 Mbit/s (else
     the 1 h connection lifetime kills it), glibc EVEX/YMM memcpy path
     selected by `avx512f`/`avx512vl`, fails through H2-proxied hops,
-    fragile vs busy workers
+    fragile vs busy workers; Cloudflare (2026-11-20) characterizes it as
+    "suitable only for demonstrating the attack against a freshly
+    started local container"
   - Censys `Censys-Research/nginx2root` — compact accounting-error PoC on
     cleartext h2c, works 1.30.0–1.31.8 with 1.31.9 as control; plus
     reproductions of the three non-h2 UAFs
   - Wiz PoC — local Docker demo (fresh container, same host)
   - WormW/nginx2root-rce-lab — claims an adaptation without AVX-512
     (unaudited)
+  - Cloudflare (2026-11-20, <https://blog.cloudflare.com/nginx2root/>) —
+    no PoC code; public ASAN verification: built 1.31.8 (commit
+    `140aa94`) and 1.31.9 with AddressSanitizer — 123007, 123633, 123634
+    and 113425 each fault on 1.31.8 and run clean on 1.31.9; 121810 not
+    reproduced (fix-commit analysis only)
+  - **Fake 'exploits'**: Cloudflare (2026-11-20) reports fake nginx2root
+    'exploit' repos circulating on GitHub; the origin exploits (Xint,
+    Wiz) were never released — audit before running anything
 - **Opsec note**: the fix landed in the public nginx repo ~1 week before
   disclosure, commit message crediting "Reported by Xint.io" — a live
   window for repo-diff watchers
@@ -121,7 +177,9 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
 4. ~~Verified `http2 off` mitigation harness~~ — **done, shipped in F1**
    (`poc/diagnose.py` NOT-H2 control + `poc/crash.py`); still the only
    public `http2 off` verification among the artifacts (neither upstream
-   repo mentions it)
+   repo mentions it; Cloudflare's 2026-11-20 mitigation matrix lists
+   `http2 off` as a recommendation — no shipped harness, so ours remains
+   the only executable verification)
 5. Full public closure of the four UAF paths — **123634 ANSWERED (F3,
    this lab)**: stock 1.31.8 worker SIGSEGV, reproducible (DNS-failure
    holds 50–300 ms; race win rate 20–40%/attempt), ALERT "could not
@@ -150,8 +208,16 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
    step is dead-socket detection inside the drain-invoked handler
    (SO_LINGER-0 RSTs discard the unACKed completion bytes; later closes
    land one stack frame too late).
-   Still open: 113425 (Censys cmd-exec from retained artifacts; ours
-   pending)
+   **113425: closed from public prior art (2026-11-20, L20)** — local
+   lab dropped; Cloudflare ASAN repro + full mechanism, Xint disclosure,
+   F5 K000163931, Censys cmd-exec from retained artifacts. 2026-11-20
+   cross-check (Cloudflare): 123634 — their repro is ASAN-build-based;
+   ours remains the first public **stock-build** crash (50–300 ms
+   DNS-failure holds, 20–40% win rate per attempt). 121810 — they also
+   did not reproduce (fix-commit analysis only): external validation of
+   our honest negative + gate analysis. 123633 — they publish an ASAN
+   crash; our distinct contribution stands (3/3 differential oracle +
+   the three source-verified mechanism corrections).
 
 ### Verified by prior art (inherited — see [prior-art.md](prior-art.md))
 
@@ -164,6 +230,10 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
 - **Release matrix** — accounting error on every release 1.30.0–1.31.8
   (x86-64, 1/2/4 workers, fresh/40/200-request heaps, main response
   types); 1.31.9 rejects. A 17-release oracle sweep would be redundant
+- **Family ASAN verification** — Cloudflare (2026-11-20,
+  <https://blog.cloudflare.com/nginx2root/>): 123007, 123633, 123634 and
+  113425 each fault on ASAN-built 1.31.8 and run clean on 1.31.9; 121810
+  not reproduced by them either (fix-commit analysis)
 
 ### Measured in this lab (F1, 2026-11-19)
 
@@ -213,6 +283,9 @@ against:
   reproduction; our oracle is a convergent reinvention of theirs)
 
 Wiz's PoC is not public; Xint disclosed but shipped no code.
+Cloudflare's 2026-11-20 deep dive (blog only, no code) adds a public
+ASAN verification of 4/5 — per-CVE overlap verdicts in
+[prior-art.md](prior-art.md).
 
 ## Sources
 
@@ -220,4 +293,7 @@ Xint writeup (xint.io/blog/nginx2root-remote-code-execution) · nginx
 CHANGES + security advisories · F5 K000164058 · CIRCL TR-105 · Rapid7
 blog (S. Fewer) · Censys blog + repo · Wiz blog (N. Ohfeld, T. Schwartz) ·
 Qualys TRU · SecurityWeek · The Hacker News (2026-11-18) · Laravel Forge
-KB · Tenable/watchTowr FAQs.
+KB · Tenable/watchTowr FAQs · Cloudflare blog "nginx2root" (2026-11-20,
+https://blog.cloudflare.com/nginx2root/) · Ubuntu USN-9182-1 (2026-11-20,
+https://ubuntu.com/security/notices/USN-9182-1) · CISA advisory 2026-136
+(2026-11-19) · F5 K000163931.

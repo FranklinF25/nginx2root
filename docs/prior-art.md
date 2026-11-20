@@ -4,6 +4,12 @@ Written 2026-11-19. Scope: every public NGINX2Root/CVE-2026-123007 artifact,
 compared against our F1 work, with an honest original-vs-redundant verdict per
 artifact. Citations use `path:line` against the exact trees we read:
 
+**Landscape refresh 2026-11-20 (T7):** Cloudflare's deep dive added as a
+compared artifact; per-CVE overlap verdicts for our final F3 outcomes
+recorded below; the 113425 local lab is dropped (L20) — that CVE is
+presented from public prior art only. The original 2026-11-19 F1 verdicts
+stand unchanged.
+
 - **Rapid7** — `sfewer-r7/CVE-2026-123007`, cited as `r7/…` (clone at
   `/tmp/r7-nginx2root-poc`; the revision Censys pinned for its reproduction
   was `ebff45f` per `censys/docs/REPRODUCTION.md`).
@@ -14,6 +20,10 @@ artifact. Citations use `path:line` against the exact trees we read:
 - **Wiz** — blog + local Docker demo; **PoC not public**. Nothing below
   relies on it. (WormW/nginx2root-rce-lab claims an AVX-512-free adaptation;
   unaudited, no code read.)
+- **Cloudflare** — engineering blog `blog.cloudflare.com/nginx2root`
+  (2026-11-20), cited as `cf/…`; no public code repo — the artifact is
+  the blog's build + test account (public nginx 1.31.8 @ `140aa94` and
+  1.31.9, both built with AddressSanitizer).
 
 ## Summary
 
@@ -35,6 +45,15 @@ the verified `http2 off` mitigation control (neither upstream mentions `http2
 off` anywhere), and the phase-tracked verdict discipline with confirm re-runs.
 Both upstreams had mislabel bugs of exactly the class our phase tracking
 prevents, which is evidence the discipline is worth shipping.
+
+**2026-11-20 landscape:** Cloudflare published the first public ASAN
+verification of the family — 123007, 123633, 123634 and 113425 each fault
+on 1.31.8 and run clean on 1.31.9; 121810 not reproduced (their section
+rests on the fix commit and published analysis). This changes no F1
+verdict above (their 123007 repro is ASAN-build-based; ours is a
+stock-build differential) and externally validates our 121810 honest
+negative. Per-CVE overlap verdicts against our final F3 outcomes: see the
+landscape section below.
 
 ## Capability × artifact
 
@@ -229,6 +248,44 @@ Blog-level disclosure and a local Docker demo (fresh container, same host).
 **PoC not public** — nothing further can be compared, and we do not
 speculate.
 
+### Cloudflare (`blog.cloudflare.com/nginx2root`, 2026-11-20)
+
+**What they did.** Built the public nginx trees — 1.31.8 (commit `140aa94`)
+and 1.31.9 — with AddressSanitizer and tested four of the five CVEs (flow
+control 123007, HTTP/2 UAF 123633, resolver 123634, mail proxy 113425):
+each faults under ASAN on 1.31.8 and runs clean on 1.31.9. They did **not**
+reproduce 121810; their HTTP/3 section is analysis of the fix commit plus
+published writeups. No code released — the blog is the artifact.
+
+- **113425, first full public mechanism:** two connections share one mail
+  session; during `auth_http` the reply the protocol handler prepared
+  stays queued and the client write handler remains `ngx_mail_send()`. If
+  that handler runs and the write fails because the client reset the
+  connection, the client connection closes and destroys the session while
+  the auth connection still points at it. Two conditions: the client
+  write event must already be registered (e.g. the client stopped
+  reading), and the login command + reset must be handled in the same
+  event-loop pass. Valid credentials are **not** needed. Fix: discard the
+  queued reply when the auth request begins + three further commits
+  blocking client writes during auth phases.
+- **123634 mechanism detail:** the resolver waiting-list walk frees the
+  next ctx when a request + mirror/SSI subrequest share one resolver node
+  and the first handler ends the request; the `could not cancel <name>
+  resolving` alert is unpatched-only (one CNAME-following variant
+  produced no alert); the fix swaps the handler and downgrades the alert
+  to debug.
+- **First affected:** 123634 since 0.6.18; 113425 since 0.5.33.
+- **Mitigation matrix:** `http2 off` blocks 123007+123633; removing QUIC
+  listeners + `http3 off` blocks 121810; fixed upstream groups for 123634
+  (`mirror_request_body on` is NOT sufficient — SSI reaches it too); bind
+  mail listeners to trusted networks for 113425; restart required (reload
+  leaves old workers with old sessions).
+- **Status as of 2026-11-19 (per the blog):** none of the five in CISA
+  KEV; no in-the-wild reports; Xint and Wiz exploits not released; the
+  Rapid7 PoC is public but "suitable only for demonstrating the attack
+  against a freshly started local container"; fake 'exploits' circulating
+  on GitHub.
+
 ## Verdicts on the five key questions
 
 1. **Flood heuristic** — *prior art for the concept, ours for the
@@ -256,7 +313,8 @@ speculate.
    glibc EVEX/YMM memcpy (avx512f/avx512vl, glibc 2.41 profile,
    x86-64-only guard); the crash tier takes the deliberately fatal
    noncanonical path instead. We inherit the constraint set as verified
-   fact; our musl/glibc<2.24 crash questions (F2) remain open.
+   fact; our musl/glibc<2.24 crash questions were answered by F2 (crash
+   survives musl as SIGILL, glibc 2.23 as SIGSEGV — finding sheet).
 4. **Censys compatibility matrix** — extracted above (per-artifact notes);
    the compact table to reference is releases 1.30.0–1.31.8 x86-64 (all
    verified) + arm64 (7 releases) + 72-case worker/heap matrix + response
@@ -278,6 +336,33 @@ speculate.
    transport-sensitive — their own TLS runs failed or false-positived for
    exactly that reason — while our measured first-return invariant plus
    bounded drains is what makes our TLS differential (crash matrix) work.
+
+## Landscape refresh 2026-11-20 — per-CVE overlap verdicts
+
+Cloudflare's deep dive against our final F3 outcomes, recorded honestly in
+both directions (their blog: 2026-11-20, `blog.cloudflare.com/nginx2root`):
+
+- **123007** — concept overlap on the crash tier only: their repro is
+  ASAN-build-based (fault on 1.31.8 @ `140aa94`, clean on 1.31.9); ours is
+  a stock-build differential + crash matrix. Every F1 originality verdict
+  in "What is original" below stands unchanged.
+- **123633** — Cloudflare now has a public ASAN crash (Censys already had
+  a stock worker crash). Ours remains distinct: the 3/3 four-build
+  differential oracle and the three source-verified mechanism corrections
+  (SETTINGS-frame mark shape, head-insert vs oldest-drain queue law,
+  h1-pressure instrument).
+- **123634** — concept overlap with a real edge retained: their repro is
+  ASAN-build-based; ours remains the **first public non-ASAN (stock-build)
+  crash**, including the timing-race recipe (50–300 ms DNS-failure holds,
+  20–40% win rate per attempt, the "could not cancel … resolving" alert as
+  path marker). The novelty window is closed — both recorded, only what is
+  ours claimed.
+- **121810** — Cloudflare also failed to reproduce; their section rests on
+  the fix commit and published analysis. External validation of our honest
+  negative and gate analysis, which remains the only published why-not.
+- **113425** — lab dropped (L20). Public prior art (Cloudflare full
+  mechanism + ASAN repro, Xint disclosure, F5 K000163931) covers repro and
+  mechanism; a scoped local lab had nothing left to add.
 
 ## What is original in this repo
 
@@ -347,16 +432,30 @@ Honest verdicts:
   queued bytes (rejection at the mid-size update) is tri-verified (Censys
   h2c + our oracle + their TLS diagnostics), incl. the 41,008-byte
   effective-window delta Censys measured between builds on TLS.
+- **113425 repro + mechanism** — Cloudflare (2026-11-20) ASAN repro and
+  full mechanism, on top of Xint's disclosure and F5 K000163931; inherited
+  wholesale per L20 (no local lab).
+- **First-affected corrections + mitigation matrix** (Cloudflare,
+  2026-11-20): 123634 since 0.6.18, 113425 since 0.5.33; `http2 off`
+  (123007+123633), QUIC listeners off + `http3 off` (121810), fixed
+  upstream groups (123634), trusted-network mail listeners (113425),
+  restart-not-reload.
 
 **Remains open** (not answered by any public artifact):
 
-- musl/Alpine crash viability (nothing public; our F2 lab work in progress).
-- glibc < 2.24 and non-x86-64 crash behavior (Rapid7's profiles are
+- musl/Alpine crash viability — closed **in this repo** by F2 (crash
+  survives as deterministic SIGILL; finding sheet); still nothing public
+  elsewhere.
+- glibc < 2.24 — closed **in this repo** by F2 (2.23 SIGSEGV); non-x86-64
+  crash/RCE remains unverified anywhere public (Rapid7's profiles are
   glibc-2.41 x86-64; Censys arm64 covered accounting only).
 - Unbuffered-proxy accounting behavior (Censys inconclusive: < 4 MiB queues).
 - Exact nginx-internal accounting sites for the dual-direction payload
   allowance (both directions are demonstrated empirically — theirs
-  client-sent, ours server-sent — but neither repo cites the source lines;
-  worth one source-reading pass in F2 if it matters).
-- Full public closure of the four sibling UAF paths (Censys's 121810 not
-  reproduced; 113425 cmd-exec retained-but-not-replayed).
+  client-sent, ours server-sent — but neither repo cites the source lines).
+- 121810 terminal reproduction — open everywhere: Censys, Cloudflare
+  (2026-11-20, fix-commit analysis only) and this repo all failed; our
+  gate analysis remains the only published explanation of why the obvious
+  interleavings are blocked. The other siblings now have public repro
+  (Censys stock/ASAN; Cloudflare ASAN; ours: 123634 stock crash, 123633
+  differential oracle).
