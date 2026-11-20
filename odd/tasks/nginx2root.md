@@ -37,7 +37,7 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
 | T3 F1: differential lab 1.31.8 vs 1.31.9 + safe detector + crash PoC + `http2 off` mitigation verification for CVE-2026-123007 | S2 | inline | — |
 | T4 F2: exploit-constraints audit — Alpine/musl, glibc < 2.24, arm64, trigger-vs-exploit traffic gap | S2 | inline | — |
 | T5 F3: labs + detectors for CVE-2026-123633, -121810, -123634 (113425 dropped, L20) | S2 | worker | fcb4aec, 4b2467c, 7034029 |
-| T6 Closure: PTES report + research writeup + README verification matrix + cross-links (42533/42945, profile) | S2 | worker | — |
+| T6 Closure: PTES report + research writeup + README verification matrix + cross-links (42533/42945, profile) | S2 | worker | d5445f5 |
 | T7 Landscape refresh: finding sheet + prior-art + README to the 2026-11-20 public state (Cloudflare ASAN 4/5 repro incl. 113425, USN-9182-1, CISA 2026-136, Rapid7 PoC, fake exploits, 125283 note) | S2 | worker | f7289ea |
 
 ## Log
@@ -183,3 +183,16 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   family fix in Ubuntu packages as of 2026-11-20; recorded accurately
   instead of the tasked "distro fixes shipped" framing. CISA cited by
   ID+date only (URL not yet added). Commit `f7289ea`. Next: T6.
+- **L22** (2026-11-20) — T6 delivered by background worker (mwoytaf0):
+  closure docs trio complete — new docs/ptes-report.md (382 lines) +
+  docs/research-writeup.md (309 lines), README verification matrix
+  (8 rows: claim → command → exact verdict strings) + cross-links
+  (cve-2026-42533/42945 + profile) + CISA 2026-136 URL. Worker nuances
+  accepted, no hard contradictions: ASLR "disabled or bypassed" framing
+  aligned with the finding sheet's disclosure-primitive note; 123633
+  3/3-per-service vs recorded 2/2 ASAN pair stated precisely; 121810
+  "~120 attempts" kept canonical vs ~143 client runs incl. timeouts.
+  Parent verification: git status showed exactly the three allowed
+  surfaces; `lab/verify.sh` re-run GREEN (5/5 verdicts, no worker
+  deaths, final PASS) — matrix row 1 matches harness output verbatim.
+  Commit `d5445f5`. **FEATURE CLOSED: T1–T7 all delivered.**
