@@ -137,8 +137,21 @@ Statuses after the F2 step-0 prior-art pass ([docs/prior-art.md](prior-art.md)):
    idle stream cannot synchronously pass ngx_quic_close_stream's two
    gates in 1.31.8 — the real interleaving must be second-order (next
    angles: instrumented-debug builds, uni-stream/two-parent pressure).
-   Still open: 123633 (Censys stock crash; ours pending), 113425 (Censys
-   cmd-exec from retained artifacts; ours pending)
+   **123633: PARTIAL (F3, this lab)** — differential oracle reproduced
+   3/3 on all four builds (vuln/vuln-asan VULNERABLE-STATE: the drain
+   GOAWAYs the still-marked ACTIVE h2 connection mid-request; fixed pair
+   PATCHED-STATE under identical triggers) + the verbatim server-side
+   kill chain on a debug build; ~200 crash-race attempts produced no
+   ASAN report and no stock crash (below Censys parity on the crash,
+   above on mechanism): the incomplete frame that marks the connection
+   reusable is a SETTINGS frame (not HEADERS), marks insert at queue
+   HEAD while the drain takes oldest-first (`ngx_queue_last`), and the
+   working pressure instrument is busy unread h1 requests — the unlanced
+   step is dead-socket detection inside the drain-invoked handler
+   (SO_LINGER-0 RSTs discard the unACKed completion bytes; later closes
+   land one stack frame too late).
+   Still open: 113425 (Censys cmd-exec from retained artifacts; ours
+   pending)
 
 ### Verified by prior art (inherited — see [prior-art.md](prior-art.md))
 

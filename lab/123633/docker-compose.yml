@@ -1,0 +1,156 @@
+name: nginx2root-123633
+
+services:
+  # CVE-2026-123633 lab: HTTP/2 connection-draining use-after-free
+  # (h2 connection left in the reusable queue with an active stream).
+  # Four nginx variants (vuln/fixed x stock/ASAN), one tiny upstream, one
+  # stdlib probe. Host ports 29660-29667, loopback-only (the lab's
+  # assigned range is 29660-29669). The probe always talks to in-network
+  # service names; host ports exist only for host-side debugging.
+  #
+  # worker_connections comes from the WC env (default 32) so the
+  # iteration matrix (32/48/64) needs no rebuild: WC=48 docker compose up.
+  # LOGLEVEL (default notice; debug adds the per-victim drain trace) is
+  # substituted the same way.
+
+  vuln:
+    # CVE-2026-123633 vulnerable: last mainline release before the fix.
+    # The bug: ngx_http_v2_handle_connection() marks the h2 connection
+    # reusable BEFORE the h2c->state.incomplete early return, and nothing
+    # un-marks it when the rest of the frame opens a stream — an active
+    # h2 connection sits in the reusable queue until it goes idle.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+        ASAN: "0"
+    image: nginx2root-123633:vuln
+    environment:
+      WC: "${WC:-32}"
+      LOGLEVEL: "${LOGLEVEL:-notice}"
+    volumes:
+      - ./conf/nginx-h2.conf.tmpl:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29660:8080"
+      - "127.0.0.1:29661:9443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  fixed:
+    # Patched control: first fixed mainline release. The whole 1.31.9
+    # fix for this CVE is one added line in ngx_http_v2_create_stream:
+    #   h2c->processing++;
+    # + ngx_reusable_connection(h2c->connection, 0);
+    # so a stream-carrying h2 connection can never be selected by
+    # ngx_drain_connections().
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+        ASAN: "0"
+    image: nginx2root-123633:fixed
+    environment:
+      WC: "${WC:-32}"
+      LOGLEVEL: "${LOGLEVEL:-notice}"
+    volumes:
+      - ./conf/nginx-h2.conf.tmpl:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29662:8080"
+      - "127.0.0.1:29663:9443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  vuln-asan:
+    # Same vulnerable source, ASAN-instrumented: the evidence floor —
+    # the verbatim heap-use-after-free report even where stock survives.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.8"
+        NGINX_TARBALL_SHA256: "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+        ASAN: "1"
+    image: nginx2root-123633:vuln-asan
+    environment:
+      WC: "${WC:-32}"
+      LOGLEVEL: "${LOGLEVEL:-notice}"
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+    volumes:
+      - ./conf/nginx-h2.conf.tmpl:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29664:8080"
+      - "127.0.0.1:29665:9443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  fixed-asan:
+    # ASAN-instrumented fixed control: the identical trigger must produce
+    # NO report here — the ASAN differential.
+    build:
+      context: .
+      args:
+        NGINX_VERSION: "1.31.9"
+        NGINX_TARBALL_SHA256: "a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+        ASAN: "1"
+    image: nginx2root-123633:fixed-asan
+    environment:
+      WC: "${WC:-32}"
+      LOGLEVEL: "${LOGLEVEL:-notice}"
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+    volumes:
+      - ./conf/nginx-h2.conf.tmpl:/etc/nginx/nginx.conf.tmpl:ro
+    ports:
+      - "127.0.0.1:29666:8080"
+      - "127.0.0.1:29667:9443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  upstream:
+    # Tiny upstream: /ok reachable, /slow?ms=N holds, /health for the
+    # healthcheck. No published port: internal compose network only. The
+    # refused variant needs no service at all (nginx proxies to its own
+    # 127.0.0.1:9).
+    image: python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    volumes:
+      - ./upstream:/upstream:ro
+    command: python /upstream/serve.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  probe:
+    # All triggers run here (S4: Docker-only) — stdlib Python, no pip
+    # deps. Image digest-pinned (TOFU 2026-11-19, same as the root lab's
+    # probe). poc/ is mounted at /poc so poc/123633/trigger.py can import
+    # the root h2lib.py (read-only).
+    image: python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    working_dir: /poc
+    volumes:
+      - ../../poc:/poc:ro
+    command: sleep infinity
+    depends_on:
+      vuln:
+        condition: service_healthy
+      fixed:
+        condition: service_healthy
+      vuln-asan:
+        condition: service_healthy
+      fixed-asan:
+        condition: service_healthy
+      upstream:
+        condition: service_healthy
