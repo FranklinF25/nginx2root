@@ -139,3 +139,10 @@ The Linux SCTP kernel LPE is explicitly out of scope (tracked only).
   no terminal UAF (below Censys crash parity, above on mechanism: 3
   source-verified corrections incl. SETTINGS-frame mark shape and
   head-insert/oldest-drain queue law). Commit `7034029`. Remaining: 113425.
+- **L19** (2026-11-19, night) — User paused the session ("terminamos por
+  ahora me quiero dormir"): 113425 worker cancelled mid-flight (its
+  partial scaffold in lab/113425/ + poc/113425/ stays uncommitted, review
+  before continuing). F3 remaining: 113425 lab. Then closure docs (PTES
+  + writeup + verification matrix + cross-links). All delivered work is
+  pushed through 43a64ae. Resume: read this doc to ## Log, check
+  lab/113425 state first.
